@@ -1,0 +1,12 @@
+version: '3.8'
+
+services:
+  pulse-voice:
+    build: .
+    container_name: pulse-voice
+    restart: unless-stopped
+    ports:
+      - "3050:3000"
+    environment:
+      - PORT=3000
+      - SERVER_PASSWORD=amigos2026 # Altera para a palavra-passe do teu grupo

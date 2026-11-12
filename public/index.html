@@ -1,0 +1,827 @@
+<!DOCTYPE html>
+<html lang="pt-PT" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Pulse — Voice & Screen</title>
+  <link rel="manifest" href="/manifest.json" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <script src="/socket.io/socket.io.js"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background-color: #09090b;
+      color: #f4f4f5;
+      overflow: hidden;
+      user-select: none;
+    }
+    .glass {
+      background: rgba(24, 24, 27, 0.72);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    .speaking-ring {
+      box-shadow: 0 0 0 3px #10b981, 0 0 25px rgba(16, 185, 129, 0.45);
+      transition: box-shadow 0.12s ease-out;
+    }
+    ::-webkit-scrollbar { width: 5px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 9999px; }
+  </style>
+</head>
+<body class="h-screen w-screen flex flex-col">
+
+  <!-- ECRÃ DE ENTRADA (LOGIN) -->
+  <div id="login-screen" class="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/95 p-4">
+    <div class="glass w-full max-w-md rounded-3xl p-8 shadow-2xl space-y-6">
+      <div class="flex items-center space-x-3">
+        <div class="h-11 w-11 rounded-2xl bg-indigo-500/20 border border-indigo-500/40 flex items-center justify-center text-indigo-400">
+          <i data-lucide="radio" class="w-6 h-6"></i>
+        </div>
+        <div>
+          <h1 class="text-xl font-semibold tracking-tight">Pulse Voice</h1>
+          <p class="text-xs text-zinc-400">Voz e Partilha de Ecrã de Baixa Latência</p>
+        </div>
+      </div>
+
+      <div class="space-y-4">
+        <div>
+          <label class="block text-xs font-medium text-zinc-400 mb-1.5">O teu Nickname</label>
+          <input id="input-name" type="text" placeholder="Ex: Tiago" maxlength="22"
+            class="w-full rounded-xl bg-zinc-900/90 border border-zinc-800 px-4 py-3 text-sm text-white focus:outline-none focus:border-indigo-500 transition" />
+        </div>
+
+        <div>
+          <label class="block text-xs font-medium text-zinc-400 mb-1.5">Palavra-passe do Servidor</label>
+          <input id="input-password" type="password" placeholder="••••••••"
+            class="w-full rounded-xl bg-zinc-900/90 border border-zinc-800 px-4 py-3 text-sm text-white focus:outline-none focus:border-indigo-500 transition" />
+        </div>
+
+        <p id="login-error" class="text-xs text-rose-400 hidden"></p>
+
+        <button id="btn-login"
+          class="w-full rounded-xl bg-indigo-600 hover:bg-indigo-500 active:scale-[0.99] transition py-3 text-sm font-medium text-white shadow-lg shadow-indigo-600/25">
+          Entrar no Servidor
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- APLICAÇÃO PRINCIPAL -->
+  <div class="flex-1 flex overflow-hidden">
+
+    <!-- BARRA LATERAL ESQUERDA: SALAS E MEMBROS -->
+    <aside class="w-72 bg-zinc-950 border-r border-white/[0.06] flex flex-col justify-between">
+      <div class="p-4 space-y-6 overflow-y-auto flex-1">
+        <!-- Cabeçalho -->
+        <div class="flex items-center justify-between px-2">
+          <div class="flex items-center space-x-2.5">
+            <span class="h-2.5 w-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
+            <span class="font-semibold text-sm tracking-tight">Pulse Private Hub</span>
+          </div>
+          <span id="ping-badge" class="text-[11px] font-mono px-2 py-0.5 rounded-md bg-zinc-900 text-emerald-400 border border-white/5">-- ms</span>
+        </div>
+
+        <!-- Lista de Canais de Voz -->
+        <div>
+          <p class="px-2 text-[11px] font-semibold uppercase tracking-wider text-zinc-500 mb-2">Canais de Voz</p>
+          <div id="channel-list" class="space-y-1.5"></div>
+        </div>
+
+        <!-- Definições Rápidas de Áudio -->
+        <div class="pt-4 border-t border-white/[0.06] space-y-3 px-2">
+          <p class="text-[11px] font-semibold uppercase tracking-wider text-zinc-500">Dispositivos & Qualidade</p>
+          <div>
+            <label class="text-[11px] text-zinc-400 block mb-1">Microfone</label>
+            <select id="select-mic" class="w-full text-xs bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-2 text-zinc-200 focus:outline-none"></select>
+          </div>
+          <label class="flex items-center justify-between text-xs text-zinc-300 cursor-pointer pt-1">
+            <span>Voz de Estúdio (Alto Bitrate)</span>
+            <input id="toggle-studio" type="checkbox" class="accent-indigo-500 rounded" />
+          </label>
+        </div>
+      </div>
+
+      <!-- Perfil do Utilizador em Baixo -->
+      <div class="p-3 m-3 rounded-2xl bg-zinc-900/70 border border-white/[0.06] flex items-center justify-between">
+        <div class="flex items-center space-x-2.5 truncate">
+          <div id="my-avatar" class="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold text-white shrink-0">U</div>
+          <div class="truncate">
+            <p id="my-name" class="text-xs font-medium text-white truncate">Utilizador</p>
+            <p id="my-status" class="text-[10px] text-zinc-400">Fora de chamada</p>
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- PALCO CENTRAL: PARTILHA DE ECRÃ E GRELHA DE AMIGOS -->
+    <main class="flex-1 flex flex-col bg-zinc-900/40 relative overflow-hidden">
+      <!-- Barra de Topo da Sala -->
+      <header class="h-14 border-b border-white/[0.06] px-6 flex items-center justify-between shrink-0">
+        <div class="flex items-center space-x-2">
+          <i data-lucide="hash" class="w-4 h-4 text-zinc-400"></i>
+          <h2 id="active-channel-title" class="text-sm font-medium text-zinc-200">Seleciona um canal de voz à esquerda</h2>
+        </div>
+        <div class="flex items-center space-x-2">
+          <span class="text-xs text-zinc-500">Atalho Mute: <kbd class="px-1.5 py-0.5 text-[10px] bg-zinc-800 rounded border border-zinc-700 text-zinc-300">Alt + M</kbd></span>
+        </div>
+      </header>
+
+      <!-- Área Principal de Vídeo/Voz -->
+      <div class="flex-1 p-6 overflow-y-auto flex flex-col gap-4">
+
+        <!-- PALCO DE PARTILHA DE ECRÃ (MODO CINEMA) -->
+        <div id="screen-stage" class="hidden relative w-full flex-1 min-h-[360px] bg-black rounded-2xl overflow-hidden border border-white/10 shadow-2xl group">
+          <video id="screen-video" autoplay playsinline class="w-full h-full object-contain bg-black"></video>
+          <div class="absolute top-4 left-4 flex items-center space-x-2 bg-black/70 backdrop-blur-md px-3 py-1.5 rounded-full border border-white/10">
+            <span class="h-2 w-2 rounded-full bg-rose-500 animate-ping"></span>
+            <span id="screen-label" class="text-xs font-medium text-white">Partilha de Ecrã • 1080p 60FPS</span>
+          </div>
+          <button id="btn-fullscreen" class="absolute bottom-4 right-4 bg-zinc-900/80 hover:bg-zinc-800 text-white p-2.5 rounded-xl border border-white/10 transition">
+            <i data-lucide="maximize" class="w-4 h-4"></i>
+          </button>
+        </div>
+
+        <!-- GRELHA DE CARTÕES DOS PARTICIPANTES -->
+        <div id="peers-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 flex-1 content-center">
+          <div id="empty-state" class="col-span-full flex flex-col items-center justify-center text-center py-20 text-zinc-500">
+            <div class="w-14 h-14 rounded-3xl bg-zinc-900 border border-white/5 flex items-center justify-center mb-3">
+              <i data-lucide="headphones" class="w-6 h-6 text-zinc-400"></i>
+            </div>
+            <p class="text-sm font-medium text-zinc-300">Nenhuma chamada ativa</p>
+            <p class="text-xs text-zinc-500 mt-1">Clica num canal de voz na barra lateral para entrares instantaneamente.</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- DOCK FLUTUANTE DE CONTROLO (ESTILO APPLE) -->
+      <div id="call-controls" class="hidden absolute bottom-6 left-1/2 -translate-x-1/2 glass px-4 py-2.5 rounded-2xl shadow-2xl flex items-center space-x-3 z-20">
+        <button id="btn-mute" title="Ativar/Desativar Microfone (Alt+M)"
+          class="p-3 rounded-xl bg-zinc-800/80 hover:bg-zinc-700/80 text-white transition flex items-center justify-center">
+          <i data-lucide="mic" class="w-5 h-5"></i>
+        </button>
+
+        <button id="btn-deafen" title="Desativar Áudio da Chamada"
+          class="p-3 rounded-xl bg-zinc-800/80 hover:bg-zinc-700/80 text-white transition flex items-center justify-center">
+          <i data-lucide="headphones" class="w-5 h-5"></i>
+        </button>
+
+        <button id="btn-share" title="Partilhar Ecrã (1080p 60fps)"
+          class="px-4 py-3 rounded-xl bg-zinc-800/80 hover:bg-zinc-700/80 text-white transition flex items-center space-x-2 text-xs font-medium">
+          <i data-lucide="monitor-up" class="w-4 h-4"></i>
+          <span id="share-btn-text">Partilhar Ecrã</span>
+        </button>
+
+        <div class="h-6 w-[1px] bg-white/10"></div>
+
+        <button id="btn-leave" title="Desligar Chamada"
+          class="px-4 py-3 rounded-xl bg-rose-600 hover:bg-rose-500 text-white transition flex items-center space-x-1.5 text-xs font-medium shadow-lg shadow-rose-600/30">
+          <i data-lucide="phone-off" class="w-4 h-4"></i>
+          <span>Sair</span>
+        </button>
+      </div>
+    </main>
+
+    <!-- BARRA LATERAL DIREITA: CHAT INTEGRADO -->
+    <aside class="w-80 bg-zinc-950 border-l border-white/[0.06] flex flex-col">
+      <div class="h-14 border-b border-white/[0.06] px-4 flex items-center space-x-2">
+        <i data-lucide="message-square" class="w-4 h-4 text-zinc-400"></i>
+        <span class="text-xs font-semibold uppercase tracking-wider text-zinc-300">Chat & Links</span>
+      </div>
+
+      <div id="chat-messages" class="flex-1 p-4 overflow-y-auto space-y-3 text-xs"></div>
+
+      <form id="chat-form" class="p-3 border-t border-white/[0.06] flex space-x-2">
+        <input id="chat-input" type="text" placeholder="Enviar mensagem ou link..."
+          class="flex-1 bg-zinc-900 border border-zinc-800 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-indigo-500" />
+        <button type="submit" class="p-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white transition">
+          <i data-lucide="send" class="w-4 h-4"></i>
+        </button>
+      </form>
+    </aside>
+  </div>
+
+  <!-- CONTENTOR OCULTO DE STREAMS DE ÁUDIO -->
+  <div id="audio-container" class="hidden"></div>
+
+  <script>
+    lucide.createIcons();
+
+    const socket = io();
+    const COLORS = ['#6366f1', '#10b981', '#f59e0b', '#ec4899', '#3b82f6', '#8b5cf6'];
+    const myColor = COLORS[Math.floor(Math.random() * COLORS.length)];
+
+    let myId = null;
+    let myName = localStorage.getItem('pulse_name') || '';
+    let currentChannel = null;
+    let localAudioStream = null;
+    let localScreenStream = null;
+
+    let isMuted = false;
+    let isDeafened = false;
+    let isSharing = false;
+
+    // Mapa de ligações WebRTC: peerId -> { pc, info, volume, screenStreamId }
+    const peers = new Map();
+
+    // Servidores STUN de alta disponibilidade (Cloudflare + Google)
+    const RTC_CONFIG = {
+      iceServers: [
+        { urls: 'stun:stun.cloudflare.com:3478' },
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'stun:stun1.l.google.com:19302' }
+      ]
+    };
+
+    // SINTETIZADOR DE EFEITOS SONOROS (Web Audio API)
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    function playTone(freq, duration = 0.09, type = 'sine', secondFreq = null) {
+      if (audioCtx.state === 'suspended') audioCtx.resume();
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = type;
+      osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+      if (secondFreq) {
+        osc.frequency.setValueAtTime(secondFreq, audioCtx.currentTime + duration);
+      }
+      gain.gain.setValueAtTime(0.08, audioCtx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + (secondFreq ? duration * 2 : duration));
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.start();
+      osc.stop(audioCtx.currentTime + (secondFreq ? duration * 2 : duration));
+    }
+
+    // Preencher nome guardado
+    document.getElementById('input-name').value = myName;
+
+    // 1. AUTENTICAÇÃO
+    document.getElementById('btn-login').addEventListener('click', () => {
+      const name = document.getElementById('input-name').value.trim();
+      const password = document.getElementById('input-password').value;
+      if (!name) return;
+
+      socket.emit('authenticate', { name, password, color: myColor }, async (res) => {
+        if (!res.ok) {
+          const err = document.getElementById('login-error');
+          err.textContent = res.error;
+          err.classList.remove('hidden');
+          return;
+        }
+        myId = res.id;
+        myName = name;
+        localStorage.setItem('pulse_name', name);
+
+        document.getElementById('my-name').textContent = name;
+        const avatar = document.getElementById('my-avatar');
+        avatar.textContent = name[0].toUpperCase();
+        avatar.style.backgroundColor = myColor;
+
+        document.getElementById('login-screen').classList.add('hidden');
+        renderDirectory(res.state);
+        await initLocalMicrophone();
+      });
+    });
+
+    // 2. INICIALIZAR MICROFONE E DETEÇÃO DE VOZ
+    async function initLocalMicrophone(deviceId = null) {
+      try {
+        const studioMode = document.getElementById('toggle-studio').checked;
+        const constraints = {
+          audio: {
+            deviceId: deviceId ? { exact: deviceId } : undefined,
+            echoCancellation: !studioMode,
+            noiseSuppression: !studioMode,
+            autoGainControl: !studioMode,
+            sampleRate: 48000,
+            channelCount: studioMode ? 2 : 1
+          },
+          video: false
+        };
+
+        const newStream = await navigator.mediaDevices.getUserMedia(constraints);
+        if (localAudioStream) {
+          localAudioStream.getTracks().forEach(t => t.stop());
+        }
+        localAudioStream = newStream;
+        localAudioStream.getAudioTracks()[0].enabled = !isMuted;
+
+        // Atualizar dispositivos na lista
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const micSelect = document.getElementById('select-mic');
+        micSelect.innerHTML = '';
+        devices.filter(d => d.kind === 'audioinput').forEach(d => {
+          const opt = document.createElement('option');
+          opt.value = d.deviceId;
+          opt.textContent = d.label || `Microfone ${micSelect.length + 1}`;
+          micSelect.appendChild(opt);
+        });
+
+        // Substituir track nos peers ativos se mudou de microfone
+        const audioTrack = localAudioStream.getAudioTracks()[0];
+        peers.forEach(({ pc }) => {
+          const sender = pc.getSenders().find(s => s.track && s.track.kind === 'audio');
+          if (sender) sender.replaceTrack(audioTrack);
+        });
+
+        monitorSpeaking(localAudioStream, 'local');
+      } catch (err) {
+        alert('Não foi possível aceder ao microfone. Verifica se estás a aceder por HTTPS ou localhost.');
+      }
+    }
+
+    document.getElementById('select-mic').addEventListener('change', (e) => initLocalMicrophone(e.target.value));
+    document.getElementById('toggle-studio').addEventListener('change', () => initLocalMicrophone(document.getElementById('select-mic').value));
+
+    // 3. DETEÇÃO VISUAL DE QUEM ESTÁ A FALAR
+    function monitorSpeaking(stream, id) {
+      try {
+        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+        const source = ctx.createMediaStreamSource(stream);
+        const analyser = ctx.createAnalyser();
+        analyser.fftSize = 256;
+        source.connect(analyser);
+        const data = new Uint8Array(analyser.frequencyBinCount);
+
+        function check() {
+          if (!stream.active) {
+            ctx.close();
+            return;
+          }
+          analyser.getByteFrequencyData(data);
+          const avg = data.reduce((a, b) => a + b, 0) / data.length;
+          const cardAvatar = document.getElementById(`avatar-${id}`);
+          if (cardAvatar) {
+            const mutedState = id === 'local' ? isMuted : (peers.get(id)?.info?.muted);
+            if (avg > 14 && !mutedState) {
+              cardAvatar.classList.add('speaking-ring');
+            } else {
+              cardAvatar.classList.remove('speaking-ring');
+            }
+          }
+          requestAnimationFrame(check);
+        }
+        check();
+      } catch (e) {}
+    }
+
+    // 4. RENDERIZAR LISTA DE CANAIS E OCUPANTES NA BARRA LATERAL
+    socket.on('directory-update', renderDirectory);
+
+    function renderDirectory({ channels, occupants }) {
+      const container = document.getElementById('channel-list');
+      container.innerHTML = '';
+
+      channels.forEach(ch => {
+        const usersInChannel = occupants[ch.id] || [];
+        const isCurrent = currentChannel === ch.id;
+
+        const wrapper = document.createElement('div');
+        wrapper.className = 'space-y-1';
+
+        const btn = document.createElement('button');
+        btn.className = `w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-medium transition ${
+          isCurrent ? 'bg-indigo-600/20 text-indigo-300 border border-indigo-500/30' : 'text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200'
+        }`;
+        btn.innerHTML = `
+          <div class="flex items-center space-x-2.5">
+            <i data-lucide="${ch.icon}" class="w-4 h-4"></i>
+            <span>${ch.name}</span>
+          </div>
+          ${usersInChannel.length > 0 ? `<span class="text-[10px] px-1.5 py-0.5 rounded-full bg-zinc-800 text-zinc-300">${usersInChannel.length}</span>` : ''}
+        `;
+        btn.onclick = () => joinVoiceChannel(ch.id, ch.name);
+        wrapper.appendChild(btn);
+
+        // Mostrar quem está dentro da sala antes mesmo de entrar
+        if (usersInChannel.length > 0) {
+          const subList = document.createElement('div');
+          subList.className = 'pl-7 space-y-1 py-0.5';
+          usersInChannel.forEach(u => {
+            const row = document.createElement('div');
+            row.className = 'flex items-center justify-between text-[11px] text-zinc-400 pr-2 py-0.5';
+            row.innerHTML = `
+              <div class="flex items-center space-x-2 truncate">
+                <span class="w-4 h-4 rounded-full flex items-center justify-center text-[9px] font-bold text-white shrink-0" style="background:${u.color}">${u.name[0].toUpperCase()}</span>
+                <span class="truncate">${u.name}</span>
+              </div>
+              <div class="flex items-center space-x-1">
+                ${u.sharing ? '<span class="px-1.5 py-0.2 bg-rose-500/20 text-rose-400 text-[9px] font-semibold rounded">LIVE</span>' : ''}
+                ${u.muted ? '<i data-lucide="mic-off" class="w-3 h-3 text-rose-400"></i>' : ''}
+              </div>
+            `;
+            subList.appendChild(row);
+          });
+          wrapper.appendChild(subList);
+        }
+
+        container.appendChild(wrapper);
+      });
+      lucide.createIcons();
+    }
+
+    // 5. ENTRAR E GERIR CHAMADA DE VOZ (WEBRTC)
+    async function joinVoiceChannel(channelId, channelName) {
+      if (currentChannel === channelId) return;
+      if (!localAudioStream) await initLocalMicrophone();
+
+      cleanupPeers();
+      currentChannel = channelId;
+
+      document.getElementById('active-channel-title').textContent = channelName;
+      document.getElementById('my-status').textContent = `Ligado em ${channelName}`;
+      document.getElementById('call-controls').classList.remove('hidden');
+      document.getElementById('empty-state').classList.add('hidden');
+
+      playTone(440, 0.08, 'sine', 587.33); // Som de entrada
+      socket.emit('join-channel', { channelId });
+      renderPeersGrid();
+    }
+
+    socket.on('channel-joined', ({ peers: existingPeers }) => {
+      existingPeers.forEach(peer => {
+        createPeerConnection(peer, false);
+      });
+      renderPeersGrid();
+    });
+
+    socket.on('peer-joined', async ({ peer }) => {
+      playTone(523.25, 0.08, 'sine', 659.25);
+      const pc = createPeerConnection(peer, true);
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      socket.emit('webrtc-signal', { to: peer.id, data: { type: 'offer', sdp: pc.localDescription } });
+      renderPeersGrid();
+    });
+
+    socket.on('peer-left', ({ peerId }) => {
+      playTone(440, 0.08, 'sine', 329.63);
+      removePeer(peerId);
+      renderPeersGrid();
+    });
+
+    socket.on('peer-media-updated', (updatedPeer) => {
+      if (peers.has(updatedPeer.id)) {
+        const p = peers.get(updatedPeer.id);
+        p.info = updatedPeer;
+        if (!updatedPeer.sharing) {
+          hideScreenStageIfFrom(updatedPeer.id);
+        }
+      }
+      renderPeersGrid();
+    });
+
+    function createPeerConnection(peerInfo, isInitiator) {
+      if (peers.has(peerInfo.id)) {
+        peers.get(peerInfo.id).pc.close();
+      }
+
+      const pc = new RTCPeerConnection(RTC_CONFIG);
+      peers.set(peerInfo.id, { pc, info: peerInfo, volume: 1.0 });
+
+      // Adicionar o meu microfone à ligação
+      if (localAudioStream) {
+        localAudioStream.getTracks().forEach(track => {
+          pc.addTrack(track, localAudioStream);
+        });
+      }
+
+      // Se eu já estiver a partilhar o ecrã, enviar também o ecrã para quem entrou
+      if (isSharing && localScreenStream) {
+        localScreenStream.getTracks().forEach(track => {
+          const sender = pc.addTrack(track, localScreenStream);
+          if (track.kind === 'video') boostVideoBitrate(sender);
+        });
+      }
+
+      pc.onicecandidate = (e) => {
+        if (e.candidate) {
+          socket.emit('webrtc-signal', { to: peerInfo.id, data: { type: 'candidate', candidate: e.candidate } });
+        }
+      };
+
+      pc.ontrack = (e) => {
+        const stream = e.streams[0];
+        if (e.track.kind === 'video') {
+          showScreenStage(stream, `${peerInfo.name} • 1080p 60FPS`, peerInfo.id);
+        } else if (e.track.kind === 'audio') {
+          let audioEl = document.getElementById(`audio-${peerInfo.id}-${stream.id}`);
+          if (!audioEl) {
+            audioEl = document.createElement('audio');
+            audioEl.id = `audio-${peerInfo.id}-${stream.id}`;
+            audioEl.autoplay = true;
+            audioEl.playsInline = true;
+            document.getElementById('audio-container').appendChild(audioEl);
+          }
+          audioEl.srcObject = stream;
+          audioEl.muted = isDeafened;
+          monitorSpeaking(stream, peerInfo.id);
+        }
+      };
+
+      return pc;
+    }
+
+    socket.on('webrtc-signal', async ({ from, peer, data }) => {
+      let peerEntry = peers.get(from);
+      if (!peerEntry) {
+        createPeerConnection(peer, false);
+        peerEntry = peers.get(from);
+      }
+      const { pc } = peerEntry;
+
+      if (data.type === 'offer') {
+        await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        socket.emit('webrtc-signal', { to: from, data: { type: 'answer', sdp: pc.localDescription } });
+      } else if (data.type === 'answer') {
+        await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
+      } else if (data.type === 'candidate') {
+        try {
+          await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+        } catch (err) {}
+      }
+      renderPeersGrid();
+    });
+
+    // Otimizar Bitrate para 1080p 60FPS (Até 6 Mbps)
+    async function boostVideoBitrate(sender) {
+      try {
+        const params = sender.getParameters();
+        if (!params.encodings) params.encodings = [{}];
+        params.encodings[0].maxBitrate = 6000000;
+        params.encodings[0].maxFramerate = 60;
+        await sender.setParameters(params);
+      } catch (e) {}
+    }
+
+    // 6. PARTILHA DE ECRÃ (1080p / 60FPS COM ÁUDIO)
+    document.getElementById('btn-share').addEventListener('click', async () => {
+      if (isSharing) {
+        stopScreenShare();
+        return;
+      }
+      try {
+        localScreenStream = await navigator.mediaDevices.getDisplayMedia({
+          video: { width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 60 } },
+          audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false }
+        });
+
+        isSharing = true;
+        document.getElementById('share-btn-text').textContent = 'Parar Partilha';
+        document.getElementById('btn-share').classList.replace('bg-zinc-800/80', 'bg-indigo-600');
+
+        showScreenStage(localScreenStream, `O teu Ecrã (${myName}) • 1080p 60FPS`, 'local');
+
+        // Quando o utilizador clica em "Parar partilha" na barra do Windows/Browser
+        localScreenStream.getVideoTracks()[0].onended = () => stopScreenShare();
+
+        // Adicionar stream de vídeo a todos os amigos na sala e renegociar
+        for (const [peerId, { pc }] of peers.entries()) {
+          localScreenStream.getTracks().forEach(track => {
+            const sender = pc.addTrack(track, localScreenStream);
+            if (track.kind === 'video') boostVideoBitrate(sender);
+          });
+          const offer = await pc.createOffer();
+          await pc.setLocalDescription(offer);
+          socket.emit('webrtc-signal', { to: peerId, data: { type: 'offer', sdp: pc.localDescription } });
+        }
+
+        socket.emit('update-media-state', { sharing: true, screenStreamId: localScreenStream.id });
+        renderPeersGrid();
+      } catch (e) {}
+    });
+
+    async function stopScreenShare() {
+      if (!isSharing) return;
+      isSharing = false;
+
+      if (localScreenStream) {
+        localScreenStream.getTracks().forEach(t => t.stop());
+        localScreenStream = null;
+      }
+
+      document.getElementById('share-btn-text').textContent = 'Partilhar Ecrã';
+      document.getElementById('btn-share').classList.replace('bg-indigo-600', 'bg-zinc-800/80');
+      hideScreenStageIfFrom('local');
+
+      for (const [peerId, { pc }] of peers.entries()) {
+        pc.getSenders().forEach(sender => {
+          if (sender.track && sender.track.kind === 'video') {
+            pc.removeTrack(sender);
+          }
+        });
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        socket.emit('webrtc-signal', { to: peerId, data: { type: 'offer', sdp: pc.localDescription } });
+      }
+
+      socket.emit('update-media-state', { sharing: false, screenStreamId: null });
+      renderPeersGrid();
+    }
+
+    function showScreenStage(stream, label, ownerId) {
+      const stage = document.getElementById('screen-stage');
+      const video = document.getElementById('screen-video');
+      stage.dataset.owner = ownerId;
+      video.srcObject = stream;
+      video.muted = ownerId === 'local'; // Evitar ouvir o próprio eco do sistema
+      document.getElementById('screen-label').textContent = label;
+      stage.classList.remove('hidden');
+    }
+
+    function hideScreenStageIfFrom(ownerId) {
+      const stage = document.getElementById('screen-stage');
+      if (stage.dataset.owner === ownerId) {
+        document.getElementById('screen-video').srcObject = null;
+        stage.classList.add('hidden');
+      }
+    }
+
+    document.getElementById('btn-fullscreen').addEventListener('click', () => {
+      const v = document.getElementById('screen-video');
+      if (v.requestFullscreen) v.requestFullscreen();
+    });
+
+    // 7. CONTROLOS DE MUTE, DEAFEN E SAIR
+    function toggleMute() {
+      isMuted = !isMuted;
+      if (localAudioStream) {
+        localAudioStream.getAudioTracks().forEach(t => { t.enabled = !isMuted; });
+      }
+      const btn = document.getElementById('btn-mute');
+      btn.innerHTML = `<i data-lucide="${isMuted ? 'mic-off' : 'mic'}" class="w-5 h-5"></i>`;
+      btn.className = `p-3 rounded-xl transition flex items-center justify-center ${
+        isMuted ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30' : 'bg-zinc-800/80 hover:bg-zinc-700/80 text-white'
+      }`;
+      lucide.createIcons();
+      playTone(isMuted ? 300 : 480, 0.06);
+      socket.emit('update-media-state', { muted: isMuted });
+      renderPeersGrid();
+    }
+
+    document.getElementById('btn-mute').addEventListener('click', toggleMute);
+    window.addEventListener('keydown', (e) => {
+      if (e.altKey && e.key.toLowerCase() === 'm') toggleMute();
+    });
+
+    document.getElementById('btn-deafen').addEventListener('click', () => {
+      isDeafened = !isDeafened;
+      if (isDeafened && !isMuted) toggleMute();
+      document.querySelectorAll('#audio-container audio').forEach(a => { a.muted = isDeafened; });
+
+      const btn = document.getElementById('btn-deafen');
+      btn.className = `p-3 rounded-xl transition flex items-center justify-center ${
+        isDeafened ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30' : 'bg-zinc-800/80 hover:bg-zinc-700/80 text-white'
+      }`;
+      socket.emit('update-media-state', { deafened: isDeafened });
+      renderPeersGrid();
+    });
+
+    document.getElementById('btn-leave').addEventListener('click', () => {
+      if (isSharing) stopScreenShare();
+      cleanupPeers();
+      currentChannel = null;
+      socket.emit('leave-channel');
+      document.getElementById('call-controls').classList.add('hidden');
+      document.getElementById('screen-stage').classList.add('hidden');
+      document.getElementById('empty-state').classList.remove('hidden');
+      document.getElementById('active-channel-title').textContent = 'Seleciona um canal de voz à esquerda';
+      document.getElementById('my-status').textContent = 'Fora de chamada';
+      playTone(380, 0.08, 'sine', 260);
+      renderPeersGrid();
+    });
+
+    function removePeer(peerId) {
+      if (peers.has(peerId)) {
+        peers.get(peerId).pc.close();
+        peers.delete(peerId);
+      }
+      document.querySelectorAll(`[id^="audio-${peerId}-"]`).forEach(el => el.remove());
+      hideScreenStageIfFrom(peerId);
+    }
+
+    function cleanupPeers() {
+      for (const peerId of peers.keys()) {
+        removePeer(peerId);
+      }
+    }
+
+    // 8. GRELHA DE PARTICIPANTES COM CONTROLO DE VOLUME INDIVIDUAL
+    function renderPeersGrid() {
+      const grid = document.getElementById('peers-grid');
+      grid.querySelectorAll('.peer-card').forEach(c => c.remove());
+      if (!currentChannel) return;
+
+      // O Meu Cartão
+      grid.appendChild(buildParticipantCard({
+        id: 'local',
+        name: `${myName} (Tu)`,
+        color: myColor,
+        muted: isMuted,
+        deafened: isDeafened,
+        sharing: isSharing,
+        isLocal: true
+      }));
+
+      // Cartões dos Amigos
+      peers.forEach(({ info, volume }, peerId) => {
+        grid.appendChild(buildParticipantCard({
+          ...info,
+          volume,
+          isLocal: false
+        }));
+      });
+
+      lucide.createIcons();
+    }
+
+    function buildParticipantCard(u) {
+      const card = document.createElement('div');
+      card.className = 'peer-card glass rounded-3xl p-6 flex flex-col items-center justify-between min-h-[200px] relative transition hover:border-white/15';
+
+      card.innerHTML = `
+        <div class="w-full flex items-center justify-between">
+          <span class="text-[11px] font-medium text-zinc-400 truncate">${u.sharing ? '🔴 A Partilhar Ecrã' : 'Em Chamada'}</span>
+          <div class="flex items-center space-x-1.5">
+            ${u.muted ? '<span class="p-1.5 rounded-lg bg-rose-500/20 text-rose-400"><i data-lucide="mic-off" class="w-3.5 h-3.5"></i></span>' : ''}
+            ${u.deafened ? '<span class="p-1.5 rounded-lg bg-rose-500/20 text-rose-400"><i data-lucide="volume-x" class="w-3.5 h-3.5"></i></span>' : ''}
+          </div>
+        </div>
+
+        <div id="avatar-${u.id}" class="w-20 h-20 rounded-full flex items-center justify-center text-2xl font-bold text-white shadow-xl my-3" style="background:${u.color}">
+          ${u.name[0].toUpperCase()}
+        </div>
+
+        <div class="w-full text-center space-y-2">
+          <p class="text-sm font-semibold text-zinc-100 truncate">${u.name}</p>
+          ${!u.isLocal ? `
+            <div class="flex items-center space-x-2 px-3 pt-1">
+              <i data-lucide="volume-2" class="w-3.5 h-3.5 text-zinc-400"></i>
+              <input type="range" min="0" max="1" step="0.05" value="${u.volume ?? 1}"
+                class="w-full accent-indigo-500 h-1 bg-zinc-800 rounded-lg cursor-pointer"
+                oninput="setPeerVolume('${u.id}', this.value)" />
+            </div>
+          ` : '<p class="text-[11px] text-emerald-400">Ligação UDP Ativa</p>'}
+        </div>
+      `;
+      return card;
+    }
+
+    window.setPeerVolume = (peerId, val) => {
+      const v = parseFloat(val);
+      if (peers.has(peerId)) peers.get(peerId).volume = v;
+      document.querySelectorAll(`[id^="audio-${peerId}-"]`).forEach(el => {
+        el.volume = v;
+      });
+    };
+
+    // 9. CHAT LATERAL COM DETEÇÃO DE LINKS
+    document.getElementById('chat-form').addEventListener('submit', (e) => {
+      e.preventDefault();
+      const input = document.getElementById('chat-input');
+      if (!input.value.trim()) return;
+      socket.emit('chat-message', { text: input.value });
+      input.value = '';
+    });
+
+    socket.on('chat-message', (msg) => {
+      const box = document.getElementById('chat-messages');
+      const div = document.createElement('div');
+      div.className = 'p-3 rounded-2xl bg-zinc-900/90 border border-white/[0.05] space-y-1';
+
+      const safeText = msg.text.replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(
+        /(https?:\/\/[^\s]+)/g,
+        '<a href="$1" target="_blank" class="text-indigo-400 underline break-all">$1</a>'
+      );
+
+      div.innerHTML = `
+        <div class="flex items-center justify-between">
+          <span class="font-semibold" style="color:${msg.senderColor}">${msg.senderName}</span>
+          <span class="text-[10px] text-zinc-500">${msg.timestamp}</span>
+        </div>
+        <p class="text-zinc-300 leading-relaxed break-words">${safeText}</p>
+      `;
+      box.appendChild(div);
+      box.scrollTop = box.scrollHeight;
+    });
+
+    // 10. MEDIDOR DE PING EM TEMPO REAL
+    setInterval(() => {
+      const start = performance.now();
+      socket.emit('ping-check', () => {
+        const ms = Math.round(performance.now() - start);
+        const badge = document.getElementById('ping-badge');
+        badge.textContent = `${ms} ms`;
+        badge.className = `text-[11px] font-mono px-2 py-0.5 rounded-md bg-zinc-900 border border-white/5 ${
+          ms < 60 ? 'text-emerald-400' : ms < 120 ? 'text-amber-400' : 'text-rose-400'
+        }`;
+      });
+    }, 3000);
+  </script>
+</body>
+</html>

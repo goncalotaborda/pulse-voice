@@ -1,0 +1,16 @@
+{
+  "name": "Pulse Voice",
+  "short_name": "Pulse",
+  "description": "Comunicação de voz e partilha de ecrã privada de alta performance",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#09090b",
+  "theme_color": "#09090b",
+  "icons": [
+    {
+      "src": "https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f399.png",
+      "sizes": "72x72",
+      "type": "image/png"
+    }
+  ]
+}
