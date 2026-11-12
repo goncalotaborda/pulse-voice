@@ -10,3 +10,11 @@ services:
     environment:
       - PORT=3000
       - SERVER_PASSWORD=amigos2026 # Altera para a palavra-passe do teu grupo
+
+  Pulse-tunnel:
+    image: cloudflare/cloudflared:latest
+    container_name: pulse-tunnel
+    restart: unless-stopped
+    command: tunnel --no-autoupdate --url http://pulse-voice:3000
+    depends_on:
+      - pulse-voice
