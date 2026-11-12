@@ -3,231 +3,464 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Pulse — Voice & Screen</title>
+  <title>Pulse — Spatial Voice & Studio Stream</title>
   <link rel="manifest" href="/manifest.json" />
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/lucide@latest"></script>
   <script src="/socket.io/socket.io.js"></script>
   <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+    :root {
+      --ease-spring: cubic-bezier(0.22, 1, 0.36, 1);
+    }
+
     body {
-      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-      background-color: #09090b;
-      color: #f4f4f5;
+      font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Inter', sans-serif;
+      background-color: #070709;
+      color: #f4f4f6;
       overflow: hidden;
       user-select: none;
+      -webkit-font-smoothing: antialiased;
     }
-    .glass {
-      background: rgba(24, 24, 27, 0.72);
-      backdrop-filter: blur(20px);
-      -webkit-backdrop-filter: blur(20px);
-      border: 1px solid rgba(255, 255, 255, 0.08);
+
+    /* Iluminação ambiente suave estilo Apple macOS */
+    .ambient-bg {
+      background:
+        radial-gradient(1100px circle at 15% 10%, rgba(99, 102, 241, 0.08), transparent 55%),
+        radial-gradient(900px circle at 85% 90%, rgba(16, 185, 129, 0.06), transparent 55%),
+        #08080b;
     }
-    .speaking-ring {
-      box-shadow: 0 0 0 3px #10b981, 0 0 25px rgba(16, 185, 129, 0.45);
-      transition: box-shadow 0.12s ease-out;
+
+    .apple-glass {
+      background: rgba(22, 22, 26, 0.65);
+      backdrop-filter: blur(28px) saturate(180%);
+      -webkit-backdrop-filter: blur(28px) saturate(180%);
+      border: 1px solid rgba(255, 255, 255, 0.07);
     }
-    ::-webkit-scrollbar { width: 5px; }
+
+    .apple-card {
+      background: linear-gradient(180deg, rgba(30, 30, 36, 0.55) 0%, rgba(20, 20, 25, 0.65) 100%);
+      backdrop-filter: blur(24px);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      box-shadow: 0 20px 40px -15px rgba(0, 0, 0, 0.5);
+      transition: all 0.35s var(--ease-spring);
+    }
+
+    .apple-card:hover {
+      border-color: rgba(255, 255, 255, 0.13);
+      transform: translateY(-2px);
+    }
+
+    .apple-dock {
+      background: rgba(24, 24, 29, 0.78);
+      backdrop-filter: blur(32px) saturate(190%);
+      -webkit-backdrop-filter: blur(32px) saturate(190%);
+      border: 1px solid rgba(255, 255, 255, 0.11);
+      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.75);
+    }
+
+    /* Anel luminoso de voz ativa */
+    .speaking-glow {
+      box-shadow:
+        0 0 0 3px #10b981,
+        0 0 28px rgba(16, 185, 129, 0.55),
+        inset 0 0 12px rgba(16, 185, 129, 0.3);
+      transform: scale(1.04);
+    }
+
+    .speaking-card-border {
+      border-color: rgba(16, 185, 129, 0.45) !important;
+      box-shadow: 0 20px 45px -15px rgba(16, 185, 129, 0.15);
+    }
+
+    .pill-option {
+      transition: all 0.2s var(--ease-spring);
+    }
+    .pill-option.active {
+      background: rgba(99, 102, 241, 0.22);
+      border-color: rgba(99, 102, 241, 0.65);
+      color: #ffffff;
+    }
+
+    @keyframes floatUp {
+      0% { transform: translateY(0) scale(0.7); opacity: 0; }
+      20% { transform: translateY(-20px) scale(1.15); opacity: 1; }
+      100% { transform: translateY(-130px) scale(0.95); opacity: 0; }
+    }
+    .floating-emoji {
+      animation: floatUp 2.2s var(--ease-spring) forwards;
+    }
+
+    ::-webkit-scrollbar { width: 5px; height: 5px; }
     ::-webkit-scrollbar-track { background: transparent; }
-    ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 9999px; }
+    ::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.1); border-radius: 9999px; }
+    ::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.2); }
   </style>
 </head>
-<body class="h-screen w-screen flex flex-col">
+<body class="h-screen w-screen flex flex-col ambient-bg">
 
-  <!-- ECRÃ DE ENTRADA (LOGIN) -->
-  <div id="login-screen" class="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/95 p-4">
-    <div class="glass w-full max-w-md rounded-3xl p-8 shadow-2xl space-y-6">
-      <div class="flex items-center space-x-3">
-        <div class="h-11 w-11 rounded-2xl bg-indigo-500/20 border border-indigo-500/40 flex items-center justify-center text-indigo-400">
-          <i data-lucide="radio" class="w-6 h-6"></i>
+  <!-- ECRÃ DE LOGIN (ESTILO MACOS LOCK SCREEN) -->
+  <div id="login-screen" class="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-2xl p-4">
+    <div class="apple-glass w-full max-w-md rounded-[32px] p-9 shadow-2xl space-y-7 border border-white/10">
+      <div class="flex flex-col items-center text-center space-y-3">
+        <div class="h-14 w-14 rounded-2xl bg-gradient-to-tr from-indigo-500/30 to-emerald-500/20 border border-white/15 flex items-center justify-center text-white shadow-inner">
+          <i data-lucide="waves" class="w-7 h-7 text-indigo-400"></i>
         </div>
         <div>
-          <h1 class="text-xl font-semibold tracking-tight">Pulse Voice</h1>
-          <p class="text-xs text-zinc-400">Voz e Partilha de Ecrã de Baixa Latência</p>
+          <h1 class="text-2xl font-semibold tracking-tight text-white">Pulse Studio</h1>
+          <p class="text-xs text-zinc-400 mt-1">Comunicação privada de baixa latência e ecrã 120Hz</p>
         </div>
       </div>
 
       <div class="space-y-4">
         <div>
-          <label class="block text-xs font-medium text-zinc-400 mb-1.5">O teu Nickname</label>
-          <input id="input-name" type="text" placeholder="Ex: Tiago" maxlength="22"
-            class="w-full rounded-xl bg-zinc-900/90 border border-zinc-800 px-4 py-3 text-sm text-white focus:outline-none focus:border-indigo-500 transition" />
+          <label class="block text-[11px] font-medium uppercase tracking-wider text-zinc-400 mb-2">O teu Nome</label>
+          <input id="input-name" type="text" placeholder="Ex: Gonçalo" maxlength="22"
+            class="w-full rounded-2xl bg-white/[0.04] border border-white/10 px-4 py-3.5 text-sm text-white placeholder-zinc-500 focus:outline-none focus:border-indigo-400 focus:bg-white/[0.07] transition" />
         </div>
 
         <div>
-          <label class="block text-xs font-medium text-zinc-400 mb-1.5">Palavra-passe do Servidor</label>
+          <label class="block text-[11px] font-medium uppercase tracking-wider text-zinc-400 mb-2">Código de Acesso</label>
           <input id="input-password" type="password" placeholder="••••••••"
-            class="w-full rounded-xl bg-zinc-900/90 border border-zinc-800 px-4 py-3 text-sm text-white focus:outline-none focus:border-indigo-500 transition" />
+            class="w-full rounded-2xl bg-white/[0.04] border border-white/10 px-4 py-3.5 text-sm text-white placeholder-zinc-500 focus:outline-none focus:border-indigo-400 focus:bg-white/[0.07] transition" />
         </div>
 
-        <p id="login-error" class="text-xs text-rose-400 hidden"></p>
+        <p id="login-error" class="text-xs text-rose-400 text-center hidden"></p>
 
         <button id="btn-login"
-          class="w-full rounded-xl bg-indigo-600 hover:bg-indigo-500 active:scale-[0.99] transition py-3 text-sm font-medium text-white shadow-lg shadow-indigo-600/25">
-          Entrar no Servidor
+          class="w-full rounded-2xl bg-white text-zinc-950 hover:bg-zinc-200 active:scale-[0.99] transition py-3.5 text-sm font-semibold shadow-xl shadow-white/10">
+          Entrar no Lounge
         </button>
       </div>
     </div>
   </div>
 
-  <!-- APLICAÇÃO PRINCIPAL -->
+  <!-- MODAL "GO LIVE" ESTILO DISCORD (CONFIGURAÇÃO DE PARTILHA DE ECRÃ) -->
+  <div id="share-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-xl p-4">
+    <div class="apple-glass w-full max-w-lg rounded-[32px] p-7 shadow-2xl space-y-6 border border-white/15">
+      <div class="flex items-center justify-between">
+        <div class="flex items-center space-x-3">
+          <div class="p-2.5 rounded-2xl bg-indigo-500/20 border border-indigo-500/30 text-indigo-400">
+            <i data-lucide="monitor-up" class="w-5 h-5"></i>
+          </div>
+          <div>
+            <h3 class="text-base font-semibold text-white">Configurar Transmissão de Ecrã</h3>
+            <p class="text-xs text-zinc-400">Escolhe a qualidade antes de selecionar o jogo ou janela</p>
+          </div>
+        </div>
+        <button id="btn-close-share-modal" class="p-2 rounded-full hover:bg-white/10 text-zinc-400 hover:text-white transition">
+          <i data-lucide="x" class="w-4 h-4"></i>
+        </button>
+      </div>
+
+      <!-- Resolução -->
+      <div class="space-y-2">
+        <label class="text-[11px] font-semibold uppercase tracking-wider text-zinc-400">Resolução de Imagem</label>
+        <div class="grid grid-cols-4 gap-2" id="res-options">
+          <button type="button" data-res="720" class="pill-option rounded-xl border border-white/10 bg-white/[0.03] py-2.5 text-xs font-medium text-zinc-300">720p HD</button>
+          <button type="button" data-res="1080" class="pill-option active rounded-xl border border-white/10 bg-white/[0.03] py-2.5 text-xs font-medium text-zinc-300">1080p FHD</button>
+          <button type="button" data-res="1440" class="pill-option rounded-xl border border-white/10 bg-white/[0.03] py-2.5 text-xs font-medium text-zinc-300">1440p 2K</button>
+          <button type="button" data-res="2160" class="pill-option rounded-xl border border-white/10 bg-white/[0.03] py-2.5 text-xs font-medium text-zinc-300">Nativa 4K</button>
+        </div>
+      </div>
+
+      <!-- Frame Rate -->
+      <div class="space-y-2">
+        <label class="text-[11px] font-semibold uppercase tracking-wider text-zinc-400">Fluidez (Taxa de Fotogramas)</label>
+        <div class="grid grid-cols-3 gap-2" id="fps-options">
+          <button type="button" data-fps="30" class="pill-option rounded-xl border border-white/10 bg-white/[0.03] py-2.5 text-xs font-medium text-zinc-300">30 FPS</button>
+          <button type="button" data-fps="60" class="pill-option active rounded-xl border border-white/10 bg-white/[0.03] py-2.5 text-xs font-medium text-zinc-300">60 FPS Smooth</button>
+          <button type="button" data-fps="120" class="pill-option rounded-xl border border-white/10 bg-white/[0.03] py-2.5 text-xs font-medium text-zinc-300">120 FPS Ultra</button>
+        </div>
+      </div>
+
+      <!-- Bitrate & Perfil de Conteúdo -->
+      <div class="grid grid-cols-2 gap-3">
+        <div class="space-y-2">
+          <label class="text-[11px] font-semibold uppercase tracking-wider text-zinc-400">Bitrate Máximo</label>
+          <select id="select-bitrate" class="w-full rounded-xl bg-zinc-900/90 border border-white/10 px-3 py-2.5 text-xs text-white focus:outline-none">
+            <option value="4000000">4 Mbps (Equilibrado)</option>
+            <option value="8000000" selected>8 Mbps (Nitro HD)</option>
+            <option value="15000000">15 Mbps (Estúdio Sem Perdas)</option>
+          </select>
+        </div>
+        <div class="space-y-2">
+          <label class="text-[11px] font-semibold uppercase tracking-wider text-zinc-400">Otimizar Para</label>
+          <select id="select-content-hint" class="w-full rounded-xl bg-zinc-900/90 border border-white/10 px-3 py-2.5 text-xs text-white focus:outline-none">
+            <option value="motion" selected>Jogos & Vídeo (Fluidez)</option>
+            <option value="detail">Código & Texto (Nitidez Máxima)</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Áudio do Sistema -->
+      <label class="flex items-center justify-between p-3.5 rounded-2xl bg-white/[0.03] border border-white/10 cursor-pointer">
+        <div class="flex items-center space-x-3">
+          <i data-lucide="volume-2" class="w-4 h-4 text-emerald-400"></i>
+          <div>
+            <p class="text-xs font-medium text-white">Partilhar Áudio do Sistema / Jogo</p>
+            <p class="text-[11px] text-zinc-400">Transmite o som em Stereo de alta fidelidade</p>
+          </div>
+        </div>
+        <input id="toggle-system-audio" type="checkbox" checked class="accent-indigo-500 w-4 h-4 rounded" />
+      </label>
+
+      <div class="flex items-center justify-end space-x-3 pt-2">
+        <button id="btn-cancel-share" class="px-5 py-2.5 rounded-xl bg-white/5 hover:bg-white/10 text-xs font-medium text-zinc-300 transition">
+          Cancelar
+        </button>
+        <button id="btn-confirm-share" class="px-6 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-xs font-semibold text-white shadow-lg shadow-indigo-600/30 transition flex items-center space-x-2">
+          <i data-lucide="radio" class="w-4 h-4"></i>
+          <span>Escolher Janela e Transmitir</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- LAYOUT PRINCIPAL -->
   <div class="flex-1 flex overflow-hidden">
 
-    <!-- BARRA LATERAL ESQUERDA: SALAS E MEMBROS -->
-    <aside class="w-72 bg-zinc-950 border-r border-white/[0.06] flex flex-col justify-between">
+    <!-- BARRA LATERAL ESQUERDA -->
+    <aside id="left-sidebar" class="w-72 apple-glass border-y-0 border-l-0 flex flex-col justify-between shrink-0 transition-all duration-300">
       <div class="p-4 space-y-6 overflow-y-auto flex-1">
-        <!-- Cabeçalho -->
-        <div class="flex items-center justify-between px-2">
+
+        <!-- Topo da Barra Lateral -->
+        <div class="flex items-center justify-between px-2 pt-1">
           <div class="flex items-center space-x-2.5">
-            <span class="h-2.5 w-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
-            <span class="font-semibold text-sm tracking-tight">Pulse Private Hub</span>
+            <div class="h-2.5 w-2.5 rounded-full bg-emerald-400 shadow-[0_0_10px_#10b981]"></div>
+            <span class="font-semibold text-sm tracking-tight text-white">Pulse Hub</span>
           </div>
-          <span id="ping-badge" class="text-[11px] font-mono px-2 py-0.5 rounded-md bg-zinc-900 text-emerald-400 border border-white/5">-- ms</span>
+          <span id="ping-badge" class="text-[11px] font-mono px-2.5 py-0.5 rounded-full bg-white/[0.05] text-emerald-400 border border-white/10">-- ms</span>
         </div>
 
-        <!-- Lista de Canais de Voz -->
+        <!-- Lista de Canais -->
         <div>
-          <p class="px-2 text-[11px] font-semibold uppercase tracking-wider text-zinc-500 mb-2">Canais de Voz</p>
+          <p class="px-2 text-[10px] font-semibold uppercase tracking-widest text-zinc-500 mb-2">Salas de Voz</p>
           <div id="channel-list" class="space-y-1.5"></div>
         </div>
 
-        <!-- Definições Rápidas de Áudio -->
-        <div class="pt-4 border-t border-white/[0.06] space-y-3 px-2">
-          <p class="text-[11px] font-semibold uppercase tracking-wider text-zinc-500">Dispositivos & Qualidade</p>
-          <div>
-            <label class="text-[11px] text-zinc-400 block mb-1">Microfone</label>
-            <select id="select-mic" class="w-full text-xs bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-2 text-zinc-200 focus:outline-none"></select>
+        <!-- Painel de Áudio & Diagnóstico do Microfone -->
+        <div class="pt-4 border-t border-white/[0.07] space-y-3.5 px-2">
+          <div class="flex items-center justify-between">
+            <p class="text-[10px] font-semibold uppercase tracking-widest text-zinc-500">Áudio & Microfone</p>
+            <button id="btn-mic-test" class="text-[10px] px-2 py-0.5 rounded-md bg-white/[0.06] hover:bg-white/[0.12] text-zinc-300 transition">
+              Ouvir-me: Off
+            </button>
           </div>
+
+          <div>
+            <select id="select-mic" class="w-full text-xs bg-white/[0.04] border border-white/10 rounded-xl px-3 py-2.5 text-zinc-200 focus:outline-none focus:border-indigo-500 transition"></select>
+          </div>
+
+          <!-- Medidor Visual de Voz em Tempo Real (VU Meter) -->
+          <div class="space-y-1.5">
+            <div class="flex justify-between text-[10px] text-zinc-400">
+              <span>Nível de Entrada</span>
+              <span id="mic-db-label" class="font-mono text-emerald-400">Pronto</span>
+            </div>
+            <div class="w-full h-2 rounded-full bg-white/[0.06] overflow-hidden p-[1px]">
+              <div id="mic-level-bar" class="h-full w-0 rounded-full bg-gradient-to-r from-emerald-400 via-teal-400 to-indigo-400 transition-all duration-75"></div>
+            </div>
+          </div>
+
+          <!-- Sensibilidade da Deteção de Voz -->
+          <div class="space-y-1">
+            <div class="flex justify-between text-[10px] text-zinc-400">
+              <span>Sensibilidade do Anel Verde</span>
+              <span id="gate-label">Alta</span>
+            </div>
+            <input id="slider-gate" type="range" min="1" max="25" value="5" class="w-full accent-emerald-400 h-1 bg-white/10 rounded-lg cursor-pointer" />
+          </div>
+
           <label class="flex items-center justify-between text-xs text-zinc-300 cursor-pointer pt-1">
-            <span>Voz de Estúdio (Alto Bitrate)</span>
+            <span class="text-[11px] text-zinc-300">Modo Voz Pura (Sem Filtros)</span>
             <input id="toggle-studio" type="checkbox" class="accent-indigo-500 rounded" />
           </label>
         </div>
       </div>
 
-      <!-- Perfil do Utilizador em Baixo -->
-      <div class="p-3 m-3 rounded-2xl bg-zinc-900/70 border border-white/[0.06] flex items-center justify-between">
+      <!-- Cartão de Utilizador em Baixo -->
+      <div class="p-3 m-3 rounded-2xl bg-white/[0.04] border border-white/[0.07] flex items-center justify-between">
         <div class="flex items-center space-x-2.5 truncate">
-          <div id="my-avatar" class="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold text-white shrink-0">U</div>
+          <div id="my-avatar" class="w-8 h-8 rounded-full flex items-center justify-center text-xs font-semibold text-white shrink-0 transition-all duration-150">U</div>
           <div class="truncate">
             <p id="my-name" class="text-xs font-medium text-white truncate">Utilizador</p>
-            <p id="my-status" class="text-[10px] text-zinc-400">Fora de chamada</p>
+            <p id="my-status" class="text-[10px] text-zinc-400 truncate">No Lounge</p>
           </div>
         </div>
+        <span class="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">Online</span>
       </div>
     </aside>
 
-    <!-- PALCO CENTRAL: PARTILHA DE ECRÃ E GRELHA DE AMIGOS -->
-    <main class="flex-1 flex flex-col bg-zinc-900/40 relative overflow-hidden">
-      <!-- Barra de Topo da Sala -->
-      <header class="h-14 border-b border-white/[0.06] px-6 flex items-center justify-between shrink-0">
-        <div class="flex items-center space-x-2">
-          <i data-lucide="hash" class="w-4 h-4 text-zinc-400"></i>
-          <h2 id="active-channel-title" class="text-sm font-medium text-zinc-200">Seleciona um canal de voz à esquerda</h2>
+    <!-- PALCO CENTRAL -->
+    <main class="flex-1 flex flex-col relative overflow-hidden">
+
+      <!-- Barra Superior Minimalista -->
+      <header class="h-14 border-b border-white/[0.06] px-6 flex items-center justify-between shrink-0 bg-black/20 backdrop-blur-md">
+        <div class="flex items-center space-x-3">
+          <button id="btn-toggle-left" title="Modo Foco / Ocultar Salas" class="p-1.5 rounded-lg hover:bg-white/10 text-zinc-400 hover:text-white transition">
+            <i data-lucide="panel-left" class="w-4 h-4"></i>
+          </button>
+          <div>
+            <h2 id="active-channel-title" class="text-sm font-medium text-white">Seleciona uma sala de voz</h2>
+          </div>
         </div>
-        <div class="flex items-center space-x-2">
-          <span class="text-xs text-zinc-500">Atalho Mute: <kbd class="px-1.5 py-0.5 text-[10px] bg-zinc-800 rounded border border-zinc-700 text-zinc-300">Alt + M</kbd></span>
+
+        <div class="flex items-center space-x-3">
+          <span class="hidden sm:inline-block text-[11px] text-zinc-400">Atalho Mute: <kbd class="px-1.5 py-0.5 text-[10px] bg-white/[0.06] rounded border border-white/10 text-zinc-200">Alt + M</kbd></span>
+          <button id="btn-toggle-chat" title="Mostrar/Ocultar Chat" class="p-2 rounded-xl bg-white/[0.04] hover:bg-white/[0.09] border border-white/10 text-zinc-300 transition relative">
+            <i data-lucide="message-circle" class="w-4 h-4"></i>
+            <span id="chat-unread-dot" class="hidden absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full bg-indigo-500"></span>
+          </button>
         </div>
       </header>
 
-      <!-- Área Principal de Vídeo/Voz -->
-      <div class="flex-1 p-6 overflow-y-auto flex flex-col gap-4">
+      <!-- Contentor de Reações Flutuantes -->
+      <div id="reactions-layer" class="pointer-events-none fixed inset-0 z-40 overflow-hidden"></div>
 
-        <!-- PALCO DE PARTILHA DE ECRÃ (MODO CINEMA) -->
-        <div id="screen-stage" class="hidden relative w-full flex-1 min-h-[360px] bg-black rounded-2xl overflow-hidden border border-white/10 shadow-2xl group">
-          <video id="screen-video" autoplay playsinline class="w-full h-full object-contain bg-black"></video>
-          <div class="absolute top-4 left-4 flex items-center space-x-2 bg-black/70 backdrop-blur-md px-3 py-1.5 rounded-full border border-white/10">
-            <span class="h-2 w-2 rounded-full bg-rose-500 animate-ping"></span>
-            <span id="screen-label" class="text-xs font-medium text-white">Partilha de Ecrã • 1080p 60FPS</span>
+      <!-- Área de Palco e Grelha -->
+      <div class="flex-1 p-6 pb-28 overflow-y-auto flex flex-col gap-5">
+
+        <!-- PALCO CINEMA DE PARTILHA DE ECRÃ -->
+        <div id="screen-stage" class="hidden relative w-full flex-1 min-h-[380px] bg-zinc-950 rounded-[28px] overflow-hidden border border-white/15 shadow-2xl flex flex-col">
+          <video id="screen-video" autoplay playsinline class="w-full h-full flex-1 object-contain bg-black"></video>
+
+          <!-- Overlay Superior de Informações da Stream -->
+          <div class="absolute top-4 left-4 right-4 flex items-center justify-between pointer-events-none">
+            <div class="flex items-center space-x-2.5 bg-black/70 backdrop-blur-xl px-3.5 py-1.5 rounded-full border border-white/15 pointer-events-auto">
+              <span class="h-2 w-2 rounded-full bg-rose-500 animate-pulse"></span>
+              <span id="screen-label" class="text-xs font-medium text-white">Transmissão em Direto</span>
+              <span id="screen-stats" class="text-[10px] font-mono px-2 py-0.5 rounded-full bg-white/10 text-indigo-300">1080p • 60FPS</span>
+            </div>
+
+            <!-- Controlos do Ecrã Partilhado -->
+            <div class="flex items-center space-x-2 bg-black/70 backdrop-blur-xl px-3 py-1.5 rounded-full border border-white/15 pointer-events-auto">
+              <i data-lucide="volume-2" class="w-3.5 h-3.5 text-zinc-300"></i>
+              <input id="screen-volume" type="range" min="0" max="1" step="0.05" value="1" class="w-20 accent-indigo-400 h-1 cursor-pointer" title="Volume da Partilha" />
+              <button id="btn-pip" title="Janela Flutuante (Picture-in-Picture)" class="p-1.5 hover:bg-white/10 rounded-full text-zinc-200 transition">
+                <i data-lucide="picture-in-picture-2" class="w-4 h-4"></i>
+              </button>
+              <button id="btn-fullscreen" title="Ecrã Inteiro" class="p-1.5 hover:bg-white/10 rounded-full text-zinc-200 transition">
+                <i data-lucide="maximize-2" class="w-4 h-4"></i>
+              </button>
+            </div>
           </div>
-          <button id="btn-fullscreen" class="absolute bottom-4 right-4 bg-zinc-900/80 hover:bg-zinc-800 text-white p-2.5 rounded-xl border border-white/10 transition">
-            <i data-lucide="maximize" class="w-4 h-4"></i>
-          </button>
         </div>
 
         <!-- GRELHA DE CARTÕES DOS PARTICIPANTES -->
-        <div id="peers-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 flex-1 content-center">
-          <div id="empty-state" class="col-span-full flex flex-col items-center justify-center text-center py-20 text-zinc-500">
-            <div class="w-14 h-14 rounded-3xl bg-zinc-900 border border-white/5 flex items-center justify-center mb-3">
-              <i data-lucide="headphones" class="w-6 h-6 text-zinc-400"></i>
+        <div id="peers-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 my-auto">
+          <div id="empty-state" class="col-span-full flex flex-col items-center justify-center text-center py-20">
+            <div class="w-16 h-16 rounded-[24px] apple-card flex items-center justify-center mb-4 text-indigo-400">
+              <i data-lucide="sparkles" class="w-7 h-7"></i>
             </div>
-            <p class="text-sm font-medium text-zinc-300">Nenhuma chamada ativa</p>
-            <p class="text-xs text-zinc-500 mt-1">Clica num canal de voz na barra lateral para entrares instantaneamente.</p>
+            <p class="text-base font-medium text-white">Ambiente pronto</p>
+            <p class="text-xs text-zinc-400 mt-1 max-w-xs">Escolhe uma sala à esquerda para conversar ou transmitir o teu ecrã até 120 FPS.</p>
           </div>
         </div>
       </div>
 
-      <!-- DOCK FLUTUANTE DE CONTROLO (ESTILO APPLE) -->
-      <div id="call-controls" class="hidden absolute bottom-6 left-1/2 -translate-x-1/2 glass px-4 py-2.5 rounded-2xl shadow-2xl flex items-center space-x-3 z-20">
-        <button id="btn-mute" title="Ativar/Desativar Microfone (Alt+M)"
-          class="p-3 rounded-xl bg-zinc-800/80 hover:bg-zinc-700/80 text-white transition flex items-center justify-center">
+      <!-- DOCK FLUTUANTE ESTILO MACOS / VISIONOS -->
+      <div id="call-controls" class="hidden absolute bottom-6 left-1/2 -translate-x-1/2 apple-dock px-3.5 py-2.5 rounded-[24px] flex items-center space-x-2.5 z-30">
+        <button id="btn-mute" title="Microfone (Alt+M)"
+          class="p-3 rounded-2xl bg-white/[0.07] hover:bg-white/[0.14] text-white transition flex items-center justify-center">
           <i data-lucide="mic" class="w-5 h-5"></i>
         </button>
 
-        <button id="btn-deafen" title="Desativar Áudio da Chamada"
-          class="p-3 rounded-xl bg-zinc-800/80 hover:bg-zinc-700/80 text-white transition flex items-center justify-center">
+        <button id="btn-deafen" title="Áudio da Sala"
+          class="p-3 rounded-2xl bg-white/[0.07] hover:bg-white/[0.14] text-white transition flex items-center justify-center">
           <i data-lucide="headphones" class="w-5 h-5"></i>
         </button>
 
-        <button id="btn-share" title="Partilhar Ecrã (1080p 60fps)"
-          class="px-4 py-3 rounded-xl bg-zinc-800/80 hover:bg-zinc-700/80 text-white transition flex items-center space-x-2 text-xs font-medium">
-          <i data-lucide="monitor-up" class="w-4 h-4"></i>
+        <button id="btn-camera" title="Ligar/Desligar Câmara"
+          class="p-3 rounded-2xl bg-white/[0.07] hover:bg-white/[0.14] text-white transition flex items-center justify-center">
+          <i data-lucide="video" class="w-5 h-5"></i>
+        </button>
+
+        <button id="btn-share" title="Partilhar Ecrã ou Jogo"
+          class="px-4 py-3 rounded-2xl bg-white/[0.07] hover:bg-white/[0.14] text-white transition flex items-center space-x-2 text-xs font-medium">
+          <i data-lucide="monitor-up" class="w-4 h-4 text-indigo-400"></i>
           <span id="share-btn-text">Partilhar Ecrã</span>
         </button>
 
+        <!-- Reações Rápidas -->
+        <div class="hidden sm:flex items-center space-x-1 bg-white/[0.04] px-2 py-1.5 rounded-2xl border border-white/5">
+          <button onclick="sendReaction('🔥')" class="hover:scale-125 transition px-1 text-sm">🔥</button>
+          <button onclick="sendReaction('😂')" class="hover:scale-125 transition px-1 text-sm">😂</button>
+          <button onclick="sendReaction('👏')" class="hover:scale-125 transition px-1 text-sm">👏</button>
+          <button onclick="sendReaction('🎮')" class="hover:scale-125 transition px-1 text-sm">🎮</button>
+        </div>
+
         <div class="h-6 w-[1px] bg-white/10"></div>
 
-        <button id="btn-leave" title="Desligar Chamada"
-          class="px-4 py-3 rounded-xl bg-rose-600 hover:bg-rose-500 text-white transition flex items-center space-x-1.5 text-xs font-medium shadow-lg shadow-rose-600/30">
+        <button id="btn-leave" title="Sair da Sala"
+          class="px-4 py-3 rounded-2xl bg-rose-500/90 hover:bg-rose-500 text-white transition flex items-center space-x-1.5 text-xs font-medium shadow-lg shadow-rose-500/25">
           <i data-lucide="phone-off" class="w-4 h-4"></i>
           <span>Sair</span>
         </button>
       </div>
     </main>
 
-    <!-- BARRA LATERAL DIREITA: CHAT INTEGRADO -->
-    <aside class="w-80 bg-zinc-950 border-l border-white/[0.06] flex flex-col">
-      <div class="h-14 border-b border-white/[0.06] px-4 flex items-center space-x-2">
-        <i data-lucide="message-square" class="w-4 h-4 text-zinc-400"></i>
-        <span class="text-xs font-semibold uppercase tracking-wider text-zinc-300">Chat & Links</span>
+    <!-- BARRA LATERAL DIREITA: CHAT & PRINTS -->
+    <aside id="right-sidebar" class="w-80 apple-glass border-y-0 border-r-0 flex flex-col shrink-0 transition-all duration-300">
+      <div class="h-14 border-b border-white/[0.06] px-4 flex items-center justify-between">
+        <div class="flex items-center space-x-2">
+          <i data-lucide="message-square" class="w-4 h-4 text-indigo-400"></i>
+          <span class="text-xs font-semibold tracking-wide text-zinc-200">Chat da Sala</span>
+        </div>
+        <span class="text-[10px] text-zinc-500">Suporta Ctrl+V de Prints</span>
       </div>
 
       <div id="chat-messages" class="flex-1 p-4 overflow-y-auto space-y-3 text-xs"></div>
 
       <form id="chat-form" class="p-3 border-t border-white/[0.06] flex space-x-2">
-        <input id="chat-input" type="text" placeholder="Enviar mensagem ou link..."
-          class="flex-1 bg-zinc-900 border border-zinc-800 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-indigo-500" />
+        <input id="chat-input" type="text" placeholder="Mensagem ou Ctrl+V print..."
+          class="flex-1 bg-white/[0.04] border border-white/10 rounded-xl px-3.5 py-2.5 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-indigo-400 transition" />
         <button type="submit" class="p-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white transition">
-          <i data-lucide="send" class="w-4 h-4"></i>
+          <i data-lucide="arrow-up" class="w-4 h-4"></i>
         </button>
       </form>
     </aside>
   </div>
 
-  <!-- CONTENTOR OCULTO DE STREAMS DE ÁUDIO -->
+  <!-- CONTENTOR DE STREAMS DE ÁUDIO -->
   <div id="audio-container" class="hidden"></div>
 
   <script>
     lucide.createIcons();
 
     const socket = io();
-    const COLORS = ['#6366f1', '#10b981', '#f59e0b', '#ec4899', '#3b82f6', '#8b5cf6'];
-    const myColor = COLORS[Math.floor(Math.random() * COLORS.length)];
+    const PALETTE = ['#6366f1', '#10b981', '#0ea5e9', '#8b5cf6', '#f43f5e', '#f59e0b'];
+    const myColor = PALETTE[Math.floor(Math.random() * PALETTE.length)];
 
     let myId = null;
     let myName = localStorage.getItem('pulse_name') || '';
     let currentChannel = null;
+
     let localAudioStream = null;
     let localScreenStream = null;
+    let localCameraStream = null;
+    let selectedMicDeviceId = localStorage.getItem('pulse_mic_id') || '';
 
     let isMuted = false;
     let isDeafened = false;
     let isSharing = false;
+    let isCameraOn = false;
+    let isLoopbackTesting = false;
+    let mySpeakingState = false;
+    let currentStreamQualityLabel = '1080p • 60FPS';
 
-    // Mapa de ligações WebRTC: peerId -> { pc, info, volume, screenStreamId }
+    // Configurações escolhidas no Modal de Partilha estilo Discord
+    let shareConfig = {
+      height: 1080,
+      fps: 60,
+      bitrate: 8000000,
+      contentHint: 'motion',
+      systemAudio: true
+    };
+
     const peers = new Map();
 
-    // Servidores STUN de alta disponibilidade (Cloudflare + Google)
     const RTC_CONFIG = {
       iceServers: [
         { urls: 'stun:stun.cloudflare.com:3478' },
@@ -236,30 +469,41 @@
       ]
     };
 
-    // SINTETIZADOR DE EFEITOS SONOROS (Web Audio API)
-    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    function playTone(freq, duration = 0.09, type = 'sine', secondFreq = null) {
-      if (audioCtx.state === 'suspended') audioCtx.resume();
-      const osc = audioCtx.createOscillator();
-      const gain = audioCtx.createGain();
-      osc.type = type;
-      osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
-      if (secondFreq) {
-        osc.frequency.setValueAtTime(secondFreq, audioCtx.currentTime + duration);
+    // MOTOR DE ÁUDIO ÚNICO DESBLOQUEADO (Web Audio API)
+    const masterAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    let loopbackAudioEl = new Audio();
+    loopbackAudioEl.muted = true;
+
+    function unlockAudioContext() {
+      if (masterAudioCtx.state === 'suspended') {
+        masterAudioCtx.resume();
       }
-      gain.gain.setValueAtTime(0.08, audioCtx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + (secondFreq ? duration * 2 : duration));
+    }
+    window.addEventListener('click', unlockAudioContext);
+    window.addEventListener('keydown', unlockAudioContext);
+
+    function playChime(freq1, freq2 = null, duration = 0.08) {
+      unlockAudioContext();
+      const osc = masterAudioCtx.createOscillator();
+      const gain = masterAudioCtx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(freq1, masterAudioCtx.currentTime);
+      if (freq2) {
+        osc.frequency.exponentialRampToValueAtTime(freq2, masterAudioCtx.currentTime + duration);
+      }
+      gain.gain.setValueAtTime(0.06, masterAudioCtx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, masterAudioCtx.currentTime + duration * 1.5);
       osc.connect(gain);
-      gain.connect(audioCtx.destination);
+      gain.connect(masterAudioCtx.destination);
       osc.start();
-      osc.stop(audioCtx.currentTime + (secondFreq ? duration * 2 : duration));
+      osc.stop(masterAudioCtx.currentTime + duration * 1.5);
     }
 
-    // Preencher nome guardado
     document.getElementById('input-name').value = myName;
 
     // 1. AUTENTICAÇÃO
     document.getElementById('btn-login').addEventListener('click', () => {
+      unlockAudioContext();
       const name = document.getElementById('input-name').value.trim();
       const password = document.getElementById('input-password').value;
       if (!name) return;
@@ -282,34 +526,48 @@
 
         document.getElementById('login-screen').classList.add('hidden');
         renderDirectory(res.state);
-        await initLocalMicrophone();
+        await initLocalMicrophone(selectedMicDeviceId);
       });
     });
 
-    // 2. INICIALIZAR MICROFONE E DETEÇÃO DE VOZ
-    async function initLocalMicrophone(deviceId = null) {
+    // 2. CAPTURA DE MICROFONE + DETEÇÃO RMS PRECISA PARA HYPERX QUADCAST
+    let micAnalyserInterval = null;
+
+    async function initLocalMicrophone(preferredDeviceId = '') {
       try {
+        unlockAudioContext();
         const studioMode = document.getElementById('toggle-studio').checked;
-        const constraints = {
-          audio: {
-            deviceId: deviceId ? { exact: deviceId } : undefined,
-            echoCancellation: !studioMode,
-            noiseSuppression: !studioMode,
-            autoGainControl: !studioMode,
-            sampleRate: 48000,
-            channelCount: studioMode ? 2 : 1
-          },
-          video: false
+
+        const audioConstraints = {
+          echoCancellation: !studioMode,
+          noiseSuppression: !studioMode,
+          autoGainControl: !studioMode,
+          sampleRate: 48000,
+          channelCount: studioMode ? 2 : 1
         };
 
-        const newStream = await navigator.mediaDevices.getUserMedia(constraints);
+        if (preferredDeviceId) {
+          audioConstraints.deviceId = { exact: preferredDeviceId };
+        }
+
+        const newStream = await navigator.mediaDevices.getUserMedia({
+          audio: audioConstraints,
+          video: false
+        });
+
         if (localAudioStream) {
           localAudioStream.getTracks().forEach(t => t.stop());
         }
         localAudioStream = newStream;
         localAudioStream.getAudioTracks()[0].enabled = !isMuted;
 
-        // Atualizar dispositivos na lista
+        // Descobrir qual foi o dispositivo realmente aberto
+        const activeTrack = localAudioStream.getAudioTracks()[0];
+        const activeDeviceId = activeTrack.getSettings().deviceId || preferredDeviceId;
+        selectedMicDeviceId = activeDeviceId;
+        localStorage.setItem('pulse_mic_id', activeDeviceId);
+
+        // Atualizar lista de microfones mantendo o HyperX QuadCast selecionado
         const devices = await navigator.mediaDevices.enumerateDevices();
         const micSelect = document.getElementById('select-mic');
         micSelect.innerHTML = '';
@@ -317,58 +575,109 @@
           const opt = document.createElement('option');
           opt.value = d.deviceId;
           opt.textContent = d.label || `Microfone ${micSelect.length + 1}`;
+          if (d.deviceId === activeDeviceId) opt.selected = true;
           micSelect.appendChild(opt);
         });
 
-        // Substituir track nos peers ativos se mudou de microfone
-        const audioTrack = localAudioStream.getAudioTracks()[0];
+        // Atualizar teste de loopback se estiver ativo
+        loopbackAudioEl.srcObject = localAudioStream;
+
+        // Substituir track nos peers em chamada
         peers.forEach(({ pc }) => {
           const sender = pc.getSenders().find(s => s.track && s.track.kind === 'audio');
-          if (sender) sender.replaceTrack(audioTrack);
+          if (sender) sender.replaceTrack(activeTrack);
         });
 
-        monitorSpeaking(localAudioStream, 'local');
+        startLocalVoiceDetector(localAudioStream);
       } catch (err) {
-        alert('Não foi possível aceder ao microfone. Verifica se estás a aceder por HTTPS ou localhost.');
+        console.warn('Tentativa com dispositivo específico falhou, a usar predefinido:', err);
+        if (preferredDeviceId) {
+          initLocalMicrophone('');
+        }
       }
     }
 
-    document.getElementById('select-mic').addEventListener('change', (e) => initLocalMicrophone(e.target.value));
-    document.getElementById('toggle-studio').addEventListener('change', () => initLocalMicrophone(document.getElementById('select-mic').value));
+    // Detetor RMS Time-Domain (muito mais sensível e fiável para voz humana)
+    function startLocalVoiceDetector(stream) {
+      if (micAnalyserInterval) clearInterval(micAnalyserInterval);
 
-    // 3. DETEÇÃO VISUAL DE QUEM ESTÁ A FALAR
-    function monitorSpeaking(stream, id) {
-      try {
-        const ctx = new (window.AudioContext || window.webkitAudioContext)();
-        const source = ctx.createMediaStreamSource(stream);
-        const analyser = ctx.createAnalyser();
-        analyser.fftSize = 256;
-        source.connect(analyser);
-        const data = new Uint8Array(analyser.frequencyBinCount);
+      const source = masterAudioCtx.createMediaStreamSource(stream);
+      const analyser = masterAudioCtx.createAnalyser();
+      analyser.fftSize = 512;
+      analyser.smoothingTimeConstant = 0.4;
+      source.connect(analyser);
 
-        function check() {
-          if (!stream.active) {
-            ctx.close();
-            return;
-          }
-          analyser.getByteFrequencyData(data);
-          const avg = data.reduce((a, b) => a + b, 0) / data.length;
-          const cardAvatar = document.getElementById(`avatar-${id}`);
-          if (cardAvatar) {
-            const mutedState = id === 'local' ? isMuted : (peers.get(id)?.info?.muted);
-            if (avg > 14 && !mutedState) {
-              cardAvatar.classList.add('speaking-ring');
-            } else {
-              cardAvatar.classList.remove('speaking-ring');
-            }
-          }
-          requestAnimationFrame(check);
+      const timeData = new Float32Array(analyser.fftSize);
+      const levelBar = document.getElementById('mic-level-bar');
+      const dbLabel = document.getElementById('mic-db-label');
+      const gateSlider = document.getElementById('slider-gate');
+
+      micAnalyserInterval = setInterval(() => {
+        if (masterAudioCtx.state === 'suspended') return;
+        analyser.getFloatTimeDomainData(timeData);
+
+        let sumSquares = 0;
+        for (let i = 0; i < timeData.length; i++) {
+          sumSquares += timeData[i] * timeData[i];
         }
-        check();
-      } catch (e) {}
+        const rms = Math.sqrt(sumSquares / timeData.length);
+        // Amplificação visual calibrada para microfones USB (como o HyperX QuadCast)
+        const levelPercent = Math.min(100, Math.round(rms * 420));
+        const threshold = parseInt(gateSlider.value, 10);
+
+        levelBar.style.width = `${ isMuted ? 0 : levelPercent }%`;
+
+        const isSpeakingNow = !isMuted && levelPercent >= threshold;
+        dbLabel.textContent = isMuted ? 'Mutado' : (isSpeakingNow ? 'A captar voz' : 'Silêncio');
+
+        // Anel verde no avatar inferior e no cartão da sala
+        const mySidebarAvatar = document.getElementById('my-avatar');
+        const myCardAvatar = document.getElementById('avatar-local');
+        const myCardBox = document.getElementById('card-local');
+
+        if (isSpeakingNow) {
+          mySidebarAvatar?.classList.add('speaking-glow');
+          myCardAvatar?.classList.add('speaking-glow');
+          myCardBox?.classList.add('speaking-card-border');
+        } else {
+          mySidebarAvatar?.classList.remove('speaking-glow');
+          myCardAvatar?.classList.remove('speaking-glow');
+          myCardBox?.classList.remove('speaking-card-border');
+        }
+
+        if (mySpeakingState !== isSpeakingNow) {
+          mySpeakingState = isSpeakingNow;
+          socket.emit('speaking-state', { speaking: isSpeakingNow });
+        }
+      }, 50);
     }
 
-    // 4. RENDERIZAR LISTA DE CANAIS E OCUPANTES NA BARRA LATERAL
+    document.getElementById('select-mic').addEventListener('change', (e) => {
+      initLocalMicrophone(e.target.value);
+    });
+
+    document.getElementById('toggle-studio').addEventListener('change', () => {
+      initLocalMicrophone(document.getElementById('select-mic').value);
+    });
+
+    document.getElementById('slider-gate').addEventListener('input', (e) => {
+      const v = parseInt(e.target.value, 10);
+      document.getElementById('gate-label').textContent = v <= 6 ? 'Alta' : v <= 14 ? 'Média' : 'Baixa';
+    });
+
+    // Botão para ouvir o próprio microfone (Loopback Test)
+    document.getElementById('btn-mic-test').addEventListener('click', (e) => {
+      unlockAudioContext();
+      isLoopbackTesting = !isLoopbackTesting;
+      loopbackAudioEl.muted = !isLoopbackTesting;
+      if (isLoopbackTesting) loopbackAudioEl.play();
+      e.target.textContent = isLoopbackTesting ? 'Ouvir-me: ON' : 'Ouvir-me: Off';
+      e.target.className = `text-[10px] px-2 py-0.5 rounded-md transition ${
+        isLoopbackTesting ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40' : 'bg-white/[0.06] text-zinc-300'
+      }`;
+    });
+
+    // 3. DIRETÓRIO DE SALAS NA BARRA LATERAL
     socket.on('directory-update', renderDirectory);
 
     function renderDirectory({ channels, occupants }) {
@@ -383,33 +692,36 @@
         wrapper.className = 'space-y-1';
 
         const btn = document.createElement('button');
-        btn.className = `w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-medium transition ${
-          isCurrent ? 'bg-indigo-600/20 text-indigo-300 border border-indigo-500/30' : 'text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200'
+        btn.className = `w-full flex items-center justify-between px-3 py-2.5 rounded-2xl text-xs font-medium transition ${
+          isCurrent
+            ? 'bg-white/[0.1] text-white border border-white/15 shadow-sm'
+            : 'text-zinc-400 hover:bg-white/[0.04] hover:text-zinc-200'
         }`;
         btn.innerHTML = `
-          <div class="flex items-center space-x-2.5">
-            <i data-lucide="${ch.icon}" class="w-4 h-4"></i>
-            <span>${ch.name}</span>
+          <div class="flex items-center space-x-2.5 truncate">
+            <i data-lucide="${ch.icon}" class="w-4 h-4 ${isCurrent ? 'text-indigo-400' : 'text-zinc-500'}"></i>
+            <div class="text-left truncate">
+              <p class="truncate">${ch.name}</p>
+            </div>
           </div>
-          ${usersInChannel.length > 0 ? `<span class="text-[10px] px-1.5 py-0.5 rounded-full bg-zinc-800 text-zinc-300">${usersInChannel.length}</span>` : ''}
+          ${usersInChannel.length > 0 ? `<span class="text-[10px] px-2 py-0.5 rounded-full bg-white/[0.08] text-zinc-200">${usersInChannel.length}</span>` : ''}
         `;
         btn.onclick = () => joinVoiceChannel(ch.id, ch.name);
         wrapper.appendChild(btn);
 
-        // Mostrar quem está dentro da sala antes mesmo de entrar
         if (usersInChannel.length > 0) {
           const subList = document.createElement('div');
-          subList.className = 'pl-7 space-y-1 py-0.5';
+          subList.className = 'pl-7 space-y-1.5 py-1';
           usersInChannel.forEach(u => {
             const row = document.createElement('div');
-            row.className = 'flex items-center justify-between text-[11px] text-zinc-400 pr-2 py-0.5';
+            row.className = 'flex items-center justify-between text-[11px] text-zinc-300 pr-2';
             row.innerHTML = `
               <div class="flex items-center space-x-2 truncate">
-                <span class="w-4 h-4 rounded-full flex items-center justify-center text-[9px] font-bold text-white shrink-0" style="background:${u.color}">${u.name[0].toUpperCase()}</span>
-                <span class="truncate">${u.name}</span>
+                <span class="w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold text-white shrink-0 transition ${u.speaking ? 'ring-2 ring-emerald-400' : ''}" style="background:${u.color}">${u.name[0].toUpperCase()}</span>
+                <span class="truncate ${u.speaking ? 'text-white font-medium' : 'text-zinc-400'}">${u.name}</span>
               </div>
               <div class="flex items-center space-x-1">
-                ${u.sharing ? '<span class="px-1.5 py-0.2 bg-rose-500/20 text-rose-400 text-[9px] font-semibold rounded">LIVE</span>' : ''}
+                ${u.sharing ? `<span class="px-1.5 py-0.5 bg-rose-500/20 border border-rose-500/30 text-rose-300 text-[9px] font-semibold rounded-md">${u.streamQuality || 'LIVE'}</span>` : ''}
                 ${u.muted ? '<i data-lucide="mic-off" class="w-3 h-3 text-rose-400"></i>' : ''}
               </div>
             `;
@@ -423,34 +735,33 @@
       lucide.createIcons();
     }
 
-    // 5. ENTRAR E GERIR CHAMADA DE VOZ (WEBRTC)
+    // 4. ENTRAR NA SALA E WEBRTC
     async function joinVoiceChannel(channelId, channelName) {
+      unlockAudioContext();
       if (currentChannel === channelId) return;
-      if (!localAudioStream) await initLocalMicrophone();
+      if (!localAudioStream) await initLocalMicrophone(selectedMicDeviceId);
 
       cleanupPeers();
       currentChannel = channelId;
 
       document.getElementById('active-channel-title').textContent = channelName;
-      document.getElementById('my-status').textContent = `Ligado em ${channelName}`;
+      document.getElementById('my-status').textContent = channelName;
       document.getElementById('call-controls').classList.remove('hidden');
       document.getElementById('empty-state').classList.add('hidden');
 
-      playTone(440, 0.08, 'sine', 587.33); // Som de entrada
+      playChime(440, 587.33);
       socket.emit('join-channel', { channelId });
       renderPeersGrid();
     }
 
     socket.on('channel-joined', ({ peers: existingPeers }) => {
-      existingPeers.forEach(peer => {
-        createPeerConnection(peer, false);
-      });
+      existingPeers.forEach(peer => createPeerConnection(peer));
       renderPeersGrid();
     });
 
     socket.on('peer-joined', async ({ peer }) => {
-      playTone(523.25, 0.08, 'sine', 659.25);
-      const pc = createPeerConnection(peer, true);
+      playChime(523.25, 659.25);
+      const pc = createPeerConnection(peer);
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
       socket.emit('webrtc-signal', { to: peer.id, data: { type: 'offer', sdp: pc.localDescription } });
@@ -458,15 +769,14 @@
     });
 
     socket.on('peer-left', ({ peerId }) => {
-      playTone(440, 0.08, 'sine', 329.63);
+      playChime(440, 329.63);
       removePeer(peerId);
       renderPeersGrid();
     });
 
     socket.on('peer-media-updated', (updatedPeer) => {
       if (peers.has(updatedPeer.id)) {
-        const p = peers.get(updatedPeer.id);
-        p.info = updatedPeer;
+        peers.get(updatedPeer.id).info = updatedPeer;
         if (!updatedPeer.sharing) {
           hideScreenStageIfFrom(updatedPeer.id);
         }
@@ -474,26 +784,41 @@
       renderPeersGrid();
     });
 
-    function createPeerConnection(peerInfo, isInitiator) {
+    socket.on('peer-speaking', ({ peerId, speaking }) => {
+      if (peers.has(peerId)) {
+        peers.get(peerId).info.speaking = speaking;
+      }
+      const avatar = document.getElementById(`avatar-${peerId}`);
+      const card = document.getElementById(`card-${peerId}`);
+      if (speaking) {
+        avatar?.classList.add('speaking-glow');
+        card?.classList.add('speaking-card-border');
+      } else {
+        avatar?.classList.remove('speaking-glow');
+        card?.classList.remove('speaking-card-border');
+      }
+    });
+
+    function createPeerConnection(peerInfo) {
       if (peers.has(peerInfo.id)) {
         peers.get(peerInfo.id).pc.close();
       }
 
       const pc = new RTCPeerConnection(RTC_CONFIG);
-      peers.set(peerInfo.id, { pc, info: peerInfo, volume: 1.0 });
+      peers.set(peerInfo.id, { pc, info: peerInfo, volume: 1.0, cameraStream: null });
 
-      // Adicionar o meu microfone à ligação
       if (localAudioStream) {
-        localAudioStream.getTracks().forEach(track => {
-          pc.addTrack(track, localAudioStream);
-        });
+        localAudioStream.getTracks().forEach(track => pc.addTrack(track, localAudioStream));
       }
 
-      // Se eu já estiver a partilhar o ecrã, enviar também o ecrã para quem entrou
+      if (isCameraOn && localCameraStream) {
+        localCameraStream.getTracks().forEach(track => pc.addTrack(track, localCameraStream));
+      }
+
       if (isSharing && localScreenStream) {
         localScreenStream.getTracks().forEach(track => {
           const sender = pc.addTrack(track, localScreenStream);
-          if (track.kind === 'video') boostVideoBitrate(sender);
+          if (track.kind === 'video') applySenderQuality(sender);
         });
       }
 
@@ -506,7 +831,15 @@
       pc.ontrack = (e) => {
         const stream = e.streams[0];
         if (e.track.kind === 'video') {
-          showScreenStage(stream, `${peerInfo.name} • 1080p 60FPS`, peerInfo.id);
+          // Distinguir entre Partilha de Ecrã e Webcam
+          const isScreen = peers.get(peerInfo.id)?.info?.sharing;
+          if (isScreen) {
+            const q = peers.get(peerInfo.id)?.info?.streamQuality || '1080p • 60FPS';
+            showScreenStage(stream, `Ecrã de ${peerInfo.name}`, q, peerInfo.id);
+          } else {
+            peers.get(peerInfo.id).cameraStream = stream;
+            renderPeersGrid();
+          }
         } else if (e.track.kind === 'audio') {
           let audioEl = document.getElementById(`audio-${peerInfo.id}-${stream.id}`);
           if (!audioEl) {
@@ -518,7 +851,6 @@
           }
           audioEl.srcObject = stream;
           audioEl.muted = isDeafened;
-          monitorSpeaking(stream, peerInfo.id);
         }
       };
 
@@ -528,7 +860,7 @@
     socket.on('webrtc-signal', async ({ from, peer, data }) => {
       let peerEntry = peers.get(from);
       if (!peerEntry) {
-        createPeerConnection(peer, false);
+        createPeerConnection(peer);
         peerEntry = peers.get(from);
       }
       const { pc } = peerEntry;
@@ -548,53 +880,105 @@
       renderPeersGrid();
     });
 
-    // Otimizar Bitrate para 1080p 60FPS (Até 6 Mbps)
-    async function boostVideoBitrate(sender) {
-      try {
-        const params = sender.getParameters();
-        if (!params.encodings) params.encodings = [{}];
-        params.encodings[0].maxBitrate = 6000000;
-        params.encodings[0].maxFramerate = 60;
-        await sender.setParameters(params);
-      } catch (e) {}
-    }
+    // 5. MODAL E PARTILHA DE ECRÃ ESTILO DISCORD ("GO LIVE")
+    const shareModal = document.getElementById('share-modal');
 
-    // 6. PARTILHA DE ECRÃ (1080p / 60FPS COM ÁUDIO)
-    document.getElementById('btn-share').addEventListener('click', async () => {
+    document.querySelectorAll('#res-options button').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('#res-options button').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        shareConfig.height = parseInt(btn.dataset.res, 10);
+      });
+    });
+
+    document.querySelectorAll('#fps-options button').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('#fps-options button').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        shareConfig.fps = parseInt(btn.dataset.fps, 10);
+      });
+    });
+
+    document.getElementById('btn-share').addEventListener('click', () => {
       if (isSharing) {
         stopScreenShare();
-        return;
+      } else {
+        shareModal.classList.remove('hidden');
       }
+    });
+
+    document.getElementById('btn-close-share-modal').onclick = () => shareModal.classList.add('hidden');
+    document.getElementById('btn-cancel-share').onclick = () => shareModal.classList.add('hidden');
+
+    document.getElementById('btn-confirm-share').addEventListener('click', async () => {
+      shareConfig.bitrate = parseInt(document.getElementById('select-bitrate').value, 10);
+      shareConfig.contentHint = document.getElementById('select-content-hint').value;
+      shareConfig.systemAudio = document.getElementById('toggle-system-audio').checked;
+      shareModal.classList.add('hidden');
+
       try {
+        const widthMap = { 720: 1280, 1080: 1920, 1440: 2560, 2160: 3840 };
+        const targetWidth = widthMap[shareConfig.height] || 1920;
+
         localScreenStream = await navigator.mediaDevices.getDisplayMedia({
-          video: { width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 60 } },
-          audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false }
+          video: {
+            width: { ideal: targetWidth, max: targetWidth },
+            height: { ideal: shareConfig.height, max: shareConfig.height },
+            frameRate: { ideal: shareConfig.fps, max: shareConfig.fps }
+          },
+          audio: shareConfig.systemAudio ? {
+            echoCancellation: false,
+            noiseSuppression: false,
+            autoGainControl: false,
+            channelCount: 2,
+            sampleRate: 48000
+          } : false
         });
 
+        const videoTrack = localScreenStream.getVideoTracks()[0];
+        if ('contentHint' in videoTrack) {
+          videoTrack.contentHint = shareConfig.contentHint;
+        }
+
+        const mbps = Math.round(shareConfig.bitrate / 1000000);
+        currentStreamQualityLabel = `${shareConfig.height}p • ${shareConfig.fps}FPS • ${mbps}Mbps`;
+
         isSharing = true;
-        document.getElementById('share-btn-text').textContent = 'Parar Partilha';
-        document.getElementById('btn-share').classList.replace('bg-zinc-800/80', 'bg-indigo-600');
+        document.getElementById('share-btn-text').textContent = 'Parar Transmissão';
+        document.getElementById('btn-share').classList.replace('bg-white/[0.07]', 'bg-indigo-600');
 
-        showScreenStage(localScreenStream, `O teu Ecrã (${myName}) • 1080p 60FPS`, 'local');
+        showScreenStage(localScreenStream, `A tua Transmissão (${myName})`, currentStreamQualityLabel, 'local');
 
-        // Quando o utilizador clica em "Parar partilha" na barra do Windows/Browser
-        localScreenStream.getVideoTracks()[0].onended = () => stopScreenShare();
+        videoTrack.onended = () => stopScreenShare();
 
-        // Adicionar stream de vídeo a todos os amigos na sala e renegociar
         for (const [peerId, { pc }] of peers.entries()) {
           localScreenStream.getTracks().forEach(track => {
             const sender = pc.addTrack(track, localScreenStream);
-            if (track.kind === 'video') boostVideoBitrate(sender);
+            if (track.kind === 'video') applySenderQuality(sender);
           });
           const offer = await pc.createOffer();
           await pc.setLocalDescription(offer);
           socket.emit('webrtc-signal', { to: peerId, data: { type: 'offer', sdp: pc.localDescription } });
         }
 
-        socket.emit('update-media-state', { sharing: true, screenStreamId: localScreenStream.id });
+        socket.emit('update-media-state', {
+          sharing: true,
+          streamQuality: `${shareConfig.height}p ${shareConfig.fps}FPS`
+        });
         renderPeersGrid();
       } catch (e) {}
     });
+
+    async function applySenderQuality(sender) {
+      try {
+        const params = sender.getParameters();
+        if (!params.encodings) params.encodings = [{}];
+        params.encodings[0].maxBitrate = shareConfig.bitrate;
+        params.encodings[0].maxFramerate = shareConfig.fps;
+        params.degradationPreference = shareConfig.contentHint === 'detail' ? 'maintain-resolution' : 'maintain-framerate';
+        await sender.setParameters(params);
+      } catch (e) {}
+    }
 
     async function stopScreenShare() {
       if (!isSharing) return;
@@ -606,12 +990,12 @@
       }
 
       document.getElementById('share-btn-text').textContent = 'Partilhar Ecrã';
-      document.getElementById('btn-share').classList.replace('bg-indigo-600', 'bg-zinc-800/80');
+      document.getElementById('btn-share').classList.replace('bg-indigo-600', 'bg-white/[0.07]');
       hideScreenStageIfFrom('local');
 
       for (const [peerId, { pc }] of peers.entries()) {
         pc.getSenders().forEach(sender => {
-          if (sender.track && sender.track.kind === 'video') {
+          if (sender.track && sender.track.kind === 'video' && (!localCameraStream || !localCameraStream.getTracks().includes(sender.track))) {
             pc.removeTrack(sender);
           }
         });
@@ -620,17 +1004,18 @@
         socket.emit('webrtc-signal', { to: peerId, data: { type: 'offer', sdp: pc.localDescription } });
       }
 
-      socket.emit('update-media-state', { sharing: false, screenStreamId: null });
+      socket.emit('update-media-state', { sharing: false, streamQuality: null });
       renderPeersGrid();
     }
 
-    function showScreenStage(stream, label, ownerId) {
+    function showScreenStage(stream, label, statsText, ownerId) {
       const stage = document.getElementById('screen-stage');
       const video = document.getElementById('screen-video');
       stage.dataset.owner = ownerId;
       video.srcObject = stream;
-      video.muted = ownerId === 'local'; // Evitar ouvir o próprio eco do sistema
+      video.muted = ownerId === 'local';
       document.getElementById('screen-label').textContent = label;
+      document.getElementById('screen-stats').textContent = statsText || 'LIVE';
       stage.classList.remove('hidden');
     }
 
@@ -642,12 +1027,65 @@
       }
     }
 
-    document.getElementById('btn-fullscreen').addEventListener('click', () => {
-      const v = document.getElementById('screen-video');
-      if (v.requestFullscreen) v.requestFullscreen();
+    document.getElementById('screen-volume').addEventListener('input', (e) => {
+      const video = document.getElementById('screen-video');
+      video.muted = false;
+      video.volume = parseFloat(e.target.value);
     });
 
-    // 7. CONTROLOS DE MUTE, DEAFEN E SAIR
+    document.getElementById('btn-fullscreen').addEventListener('click', () => {
+      const stage = document.getElementById('screen-stage');
+      if (document.fullscreenElement) {
+        document.exitFullscreen();
+      } else if (stage.requestFullscreen) {
+        stage.requestFullscreen();
+      }
+    });
+
+    document.getElementById('btn-pip').addEventListener('click', async () => {
+      const v = document.getElementById('screen-video');
+      if (document.pictureInPictureElement) {
+        await document.exitPictureInPicture();
+      } else if (v.requestPictureInPicture) {
+        await v.requestPictureInPicture();
+      }
+    });
+
+    // 6. SUPORTE A CÂMARA / WEBCAM NOS CARTÕES
+    document.getElementById('btn-camera').addEventListener('click', async () => {
+      if (isCameraOn) {
+        isCameraOn = false;
+        if (localCameraStream) {
+          localCameraStream.getTracks().forEach(t => t.stop());
+          localCameraStream = null;
+        }
+        document.getElementById('btn-camera').className = 'p-3 rounded-2xl bg-white/[0.07] hover:bg-white/[0.14] text-white transition flex items-center justify-center';
+        socket.emit('update-media-state', { camera: false });
+        renderPeersGrid();
+        return;
+      }
+
+      try {
+        localCameraStream = await navigator.mediaDevices.getUserMedia({
+          video: { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } },
+          audio: false
+        });
+        isCameraOn = true;
+        document.getElementById('btn-camera').className = 'p-3 rounded-2xl bg-indigo-600 text-white transition flex items-center justify-center';
+
+        for (const [peerId, { pc }] of peers.entries()) {
+          localCameraStream.getTracks().forEach(track => pc.addTrack(track, localCameraStream));
+          const offer = await pc.createOffer();
+          await pc.setLocalDescription(offer);
+          socket.emit('webrtc-signal', { to: peerId, data: { type: 'offer', sdp: pc.localDescription } });
+        }
+
+        socket.emit('update-media-state', { camera: true });
+        renderPeersGrid();
+      } catch (err) {}
+    });
+
+    // 7. CONTROLOS DE MUTE, DEAFEN, REAÇÕES E SAIR
     function toggleMute() {
       isMuted = !isMuted;
       if (localAudioStream) {
@@ -655,11 +1093,11 @@
       }
       const btn = document.getElementById('btn-mute');
       btn.innerHTML = `<i data-lucide="${isMuted ? 'mic-off' : 'mic'}" class="w-5 h-5"></i>`;
-      btn.className = `p-3 rounded-xl transition flex items-center justify-center ${
-        isMuted ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30' : 'bg-zinc-800/80 hover:bg-zinc-700/80 text-white'
+      btn.className = `p-3 rounded-2xl transition flex items-center justify-center ${
+        isMuted ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30' : 'bg-white/[0.07] hover:bg-white/[0.14] text-white'
       }`;
       lucide.createIcons();
-      playTone(isMuted ? 300 : 480, 0.06);
+      playChime(isMuted ? 320 : 480);
       socket.emit('update-media-state', { muted: isMuted });
       renderPeersGrid();
     }
@@ -675,8 +1113,8 @@
       document.querySelectorAll('#audio-container audio').forEach(a => { a.muted = isDeafened; });
 
       const btn = document.getElementById('btn-deafen');
-      btn.className = `p-3 rounded-xl transition flex items-center justify-center ${
-        isDeafened ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30' : 'bg-zinc-800/80 hover:bg-zinc-700/80 text-white'
+      btn.className = `p-3 rounded-2xl transition flex items-center justify-center ${
+        isDeafened ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30' : 'bg-white/[0.07] hover:bg-white/[0.14] text-white'
       }`;
       socket.emit('update-media-state', { deafened: isDeafened });
       renderPeersGrid();
@@ -690,10 +1128,27 @@
       document.getElementById('call-controls').classList.add('hidden');
       document.getElementById('screen-stage').classList.add('hidden');
       document.getElementById('empty-state').classList.remove('hidden');
-      document.getElementById('active-channel-title').textContent = 'Seleciona um canal de voz à esquerda';
-      document.getElementById('my-status').textContent = 'Fora de chamada';
-      playTone(380, 0.08, 'sine', 260);
+      document.getElementById('active-channel-title').textContent = 'Seleciona uma sala de voz';
+      document.getElementById('my-status').textContent = 'No Lounge';
+      playChime(380, 260);
       renderPeersGrid();
+    });
+
+    window.sendReaction = (emoji) => {
+      socket.emit('send-reaction', { emoji });
+    };
+
+    socket.on('call-reaction', ({ emoji, name }) => {
+      const layer = document.getElementById('reactions-layer');
+      const el = document.createElement('div');
+      el.className = 'floating-emoji absolute bottom-24 flex flex-col items-center';
+      el.style.left = `${35 + Math.random() * 30}%`;
+      el.innerHTML = `
+        <span class="text-4xl drop-shadow-lg">${emoji}</span>
+        <span class="text-[10px] px-2 py-0.5 rounded-full bg-black/60 text-white mt-1">${name}</span>
+      `;
+      layer.appendChild(el);
+      setTimeout(() => el.remove(), 2200);
     });
 
     function removePeer(peerId) {
@@ -711,13 +1166,12 @@
       }
     }
 
-    // 8. GRELHA DE PARTICIPANTES COM CONTROLO DE VOLUME INDIVIDUAL
+    // 8. GRELHA DE PARTICIPANTES ESTILO APPLE
     function renderPeersGrid() {
       const grid = document.getElementById('peers-grid');
       grid.querySelectorAll('.peer-card').forEach(c => c.remove());
       if (!currentChannel) return;
 
-      // O Meu Cartão
       grid.appendChild(buildParticipantCard({
         id: 'local',
         name: `${myName} (Tu)`,
@@ -725,14 +1179,17 @@
         muted: isMuted,
         deafened: isDeafened,
         sharing: isSharing,
+        speaking: mySpeakingState,
+        streamQuality: currentStreamQualityLabel,
+        cameraStream: isCameraOn ? localCameraStream : null,
         isLocal: true
       }));
 
-      // Cartões dos Amigos
-      peers.forEach(({ info, volume }, peerId) => {
+      peers.forEach(({ info, volume, cameraStream }) => {
         grid.appendChild(buildParticipantCard({
           ...info,
           volume,
+          cameraStream,
           isLocal: false
         }));
       });
@@ -742,33 +1199,48 @@
 
     function buildParticipantCard(u) {
       const card = document.createElement('div');
-      card.className = 'peer-card glass rounded-3xl p-6 flex flex-col items-center justify-between min-h-[200px] relative transition hover:border-white/15';
+      card.id = `card-${u.id}`;
+      card.className = `peer-card apple-card rounded-[28px] p-6 flex flex-col items-center justify-between min-h-[215px] relative overflow-hidden ${
+        u.speaking ? 'speaking-card-border' : ''
+      }`;
 
       card.innerHTML = `
-        <div class="w-full flex items-center justify-between">
-          <span class="text-[11px] font-medium text-zinc-400 truncate">${u.sharing ? '🔴 A Partilhar Ecrã' : 'Em Chamada'}</span>
+        ${u.cameraStream ? `<video id="cam-${u.id}" autoplay playsinline muted class="absolute inset-0 w-full h-full object-cover z-0"></video><div class="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent z-0"></div>` : ''}
+
+        <div class="w-full flex items-center justify-between z-10">
+          <span class="text-[11px] font-medium ${u.sharing ? 'text-rose-400' : 'text-zinc-400'} truncate">
+            ${u.sharing ? `🔴 ${u.streamQuality || 'LIVE'}` : 'Ligação Direta'}
+          </span>
           <div class="flex items-center space-x-1.5">
-            ${u.muted ? '<span class="p-1.5 rounded-lg bg-rose-500/20 text-rose-400"><i data-lucide="mic-off" class="w-3.5 h-3.5"></i></span>' : ''}
-            ${u.deafened ? '<span class="p-1.5 rounded-lg bg-rose-500/20 text-rose-400"><i data-lucide="volume-x" class="w-3.5 h-3.5"></i></span>' : ''}
+            ${u.muted ? '<span class="p-1.5 rounded-xl bg-rose-500/20 text-rose-400 border border-rose-500/30"><i data-lucide="mic-off" class="w-3.5 h-3.5"></i></span>' : ''}
+            ${u.deafened ? '<span class="p-1.5 rounded-xl bg-rose-500/20 text-rose-400 border border-rose-500/30"><i data-lucide="volume-x" class="w-3.5 h-3.5"></i></span>' : ''}
           </div>
         </div>
 
-        <div id="avatar-${u.id}" class="w-20 h-20 rounded-full flex items-center justify-center text-2xl font-bold text-white shadow-xl my-3" style="background:${u.color}">
+        <div id="avatar-${u.id}" class="${u.cameraStream ? 'opacity-0' : ''} w-20 h-20 rounded-full flex items-center justify-center text-2xl font-semibold text-white shadow-2xl my-3 transition-all duration-150 z-10 ${u.speaking ? 'speaking-glow' : ''}" style="background:${u.color}">
           ${u.name[0].toUpperCase()}
         </div>
 
-        <div class="w-full text-center space-y-2">
-          <p class="text-sm font-semibold text-zinc-100 truncate">${u.name}</p>
+        <div class="w-full text-center space-y-2 z-10">
+          <p class="text-sm font-semibold text-white truncate">${u.name}</p>
           ${!u.isLocal ? `
             <div class="flex items-center space-x-2 px-3 pt-1">
               <i data-lucide="volume-2" class="w-3.5 h-3.5 text-zinc-400"></i>
               <input type="range" min="0" max="1" step="0.05" value="${u.volume ?? 1}"
-                class="w-full accent-indigo-500 h-1 bg-zinc-800 rounded-lg cursor-pointer"
+                class="w-full accent-indigo-400 h-1 bg-white/10 rounded-lg cursor-pointer"
                 oninput="setPeerVolume('${u.id}', this.value)" />
             </div>
-          ` : '<p class="text-[11px] text-emerald-400">Ligação UDP Ativa</p>'}
+          ` : '<p class="text-[11px] text-emerald-400/90 font-medium">Áudio Opus 48kHz Ativo</p>'}
         </div>
       `;
+
+      if (u.cameraStream) {
+        setTimeout(() => {
+          const v = card.querySelector(`#cam-${u.id}`);
+          if (v) v.srcObject = u.cameraStream;
+        }, 20);
+      }
+
       return card;
     }
 
@@ -780,7 +1252,19 @@
       });
     };
 
-    // 9. CHAT LATERAL COM DETEÇÃO DE LINKS
+    // 9. CHAT LATERAL COM SUPORTE A PRINTS (CTRL+V) E COLAPSO DE PAINÉIS
+    const leftSidebar = document.getElementById('left-sidebar');
+    const rightSidebar = document.getElementById('right-sidebar');
+
+    document.getElementById('btn-toggle-left').addEventListener('click', () => {
+      leftSidebar.classList.toggle('hidden');
+    });
+
+    document.getElementById('btn-toggle-chat').addEventListener('click', () => {
+      rightSidebar.classList.toggle('hidden');
+      document.getElementById('chat-unread-dot').classList.add('hidden');
+    });
+
     document.getElementById('chat-form').addEventListener('submit', (e) => {
       e.preventDefault();
       const input = document.getElementById('chat-input');
@@ -789,37 +1273,55 @@
       input.value = '';
     });
 
+    // Colar Prints diretamente com Ctrl+V
+    window.addEventListener('paste', (e) => {
+      const items = e.clipboardData?.items;
+      if (!items) return;
+      for (const item of items) {
+        if (item.type.indexOf('image') !== -1) {
+          const file = item.getAsFile();
+          const reader = new FileReader();
+          reader.onload = (ev) => {
+            socket.emit('chat-message', { text: '', image: ev.target.result });
+          };
+          reader.readAsDataURL(file);
+        }
+      }
+    });
+
     socket.on('chat-message', (msg) => {
+      if (rightSidebar.classList.contains('hidden')) {
+        document.getElementById('chat-unread-dot').classList.remove('hidden');
+      }
+
       const box = document.getElementById('chat-messages');
       const div = document.createElement('div');
-      div.className = 'p-3 rounded-2xl bg-zinc-900/90 border border-white/[0.05] space-y-1';
+      div.className = 'p-3.5 rounded-2xl bg-white/[0.04] border border-white/[0.06] space-y-1.5';
 
-      const safeText = msg.text.replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(
+      const safeText = (msg.text || '').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(
         /(https?:\/\/[^\s]+)/g,
         '<a href="$1" target="_blank" class="text-indigo-400 underline break-all">$1</a>'
       );
 
       div.innerHTML = `
         <div class="flex items-center justify-between">
-          <span class="font-semibold" style="color:${msg.senderColor}">${msg.senderName}</span>
+          <span class="font-semibold text-[11px]" style="color:${msg.senderColor}">${msg.senderName}</span>
           <span class="text-[10px] text-zinc-500">${msg.timestamp}</span>
         </div>
-        <p class="text-zinc-300 leading-relaxed break-words">${safeText}</p>
+        ${safeText ? `<p class="text-zinc-200 leading-relaxed break-words">${safeText}</p>` : ''}
+        ${msg.image ? `<img src="${msg.image}" class="rounded-xl max-h-52 w-auto object-cover border border-white/10 cursor-pointer mt-1" onclick="window.open(this.src)" />` : ''}
       `;
       box.appendChild(div);
       box.scrollTop = box.scrollHeight;
     });
 
-    // 10. MEDIDOR DE PING EM TEMPO REAL
+    // 10. MEDIDOR DE PING
     setInterval(() => {
       const start = performance.now();
       socket.emit('ping-check', () => {
         const ms = Math.round(performance.now() - start);
         const badge = document.getElementById('ping-badge');
         badge.textContent = `${ms} ms`;
-        badge.className = `text-[11px] font-mono px-2 py-0.5 rounded-md bg-zinc-900 border border-white/5 ${
-          ms < 60 ? 'text-emerald-400' : ms < 120 ? 'text-amber-400' : 'text-rose-400'
-        }`;
       });
     }, 3000);
   </script>

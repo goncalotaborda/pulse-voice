@@ -7,8 +7,9 @@ const app = express();
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: { origin: '*' },
-  pingInterval: 5000,
-  pingTimeout: 10000
+  maxHttpBufferSize: 8e6, // Permite partilhar prints/imagens até 8MB no chat
+  pingInterval: 4000,
+  pingTimeout: 8000
 });
 
 const PORT = process.env.PORT || 3000;
@@ -16,16 +17,14 @@ const SERVER_PASSWORD = process.env.SERVER_PASSWORD || '';
 
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Canais predefinidos do servidor
 const CHANNELS = [
-  { id: 'lobby', name: 'Lobby Principal', icon: 'volume-2' },
-  { id: 'gaming', name: 'Gaming & Tryhard', icon: 'gamepad-2' },
-  { id: 'cinema', name: 'Cinema & Watch Party', icon: 'tv' },
-  { id: 'chill', name: 'Chill & Conversa', icon: 'coffee' }
+  { id: 'lobby', name: 'Lounge Principal', icon: 'sparkles', desc: 'Conversa geral e ponto de encontro' },
+  { id: 'gaming', name: 'Gaming & Squad', icon: 'gamepad-2', desc: 'Baixa latência • 60/120 FPS' },
+  { id: 'cinema', name: 'Cinema & Watch Party', icon: 'film', desc: 'Partilha de ecrã com áudio Hi-Fi' },
+  { id: 'focus', name: 'Co-Working & Chill', icon: 'coffee', desc: 'Ambiente relaxante e estudo' }
 ];
 
-// Estado em memória dos utilizadores ligados
-const users = new Map(); // socket.id -> { id, name, channel, muted, deafened, sharing, screenStreamId, color }
+const users = new Map();
 
 function getDirectoryState() {
   const channelState = {};
@@ -39,10 +38,9 @@ function getDirectoryState() {
 }
 
 io.on('connection', (socket) => {
-  // Autenticação inicial e registo do perfil
   socket.on('authenticate', ({ name, password, color }, callback) => {
     if (SERVER_PASSWORD && password !== SERVER_PASSWORD) {
-      return callback({ ok: false, error: 'Palavra-passe do servidor incorreta.' });
+      return callback({ ok: false, error: 'Palavra-passe incorreta.' });
     }
 
     const cleanName = (name || 'Utilizador').trim().slice(0, 24);
@@ -54,19 +52,19 @@ io.on('connection', (socket) => {
       muted: false,
       deafened: false,
       sharing: false,
-      screenStreamId: null
+      camera: false,
+      speaking: false,
+      streamQuality: null
     });
 
     callback({ ok: true, id: socket.id, state: getDirectoryState() });
     io.emit('directory-update', getDirectoryState());
   });
 
-  // Entrar num canal de voz
   socket.on('join-channel', ({ channelId }) => {
     const user = users.get(socket.id);
     if (!user) return;
 
-    // Sair do canal anterior se estiver num
     if (user.channel) {
       const prevChannel = user.channel;
       socket.leave(prevChannel);
@@ -75,10 +73,10 @@ io.on('connection', (socket) => {
 
     user.channel = channelId;
     user.sharing = false;
-    user.screenStreamId = null;
+    user.camera = false;
+    user.streamQuality = null;
     socket.join(channelId);
 
-    // Obter lista de quem já está na sala
     const existingPeers = [];
     for (const [id, u] of users.entries()) {
       if (u.channel === channelId && id !== socket.id) {
@@ -86,15 +84,11 @@ io.on('connection', (socket) => {
       }
     }
 
-    // Enviar os membros atuais a quem acabou de entrar
     socket.emit('channel-joined', { channelId, peers: existingPeers });
-
-    // Avisar quem já estava na sala para iniciar ligação WebRTC
     socket.to(channelId).emit('peer-joined', { peer: user });
     io.emit('directory-update', getDirectoryState());
   });
 
-  // Sair da chamada de voz
   socket.on('leave-channel', () => {
     const user = users.get(socket.id);
     if (!user || !user.channel) return;
@@ -103,13 +97,14 @@ io.on('connection', (socket) => {
     socket.leave(prevChannel);
     user.channel = null;
     user.sharing = false;
-    user.screenStreamId = null;
+    user.camera = false;
+    user.speaking = false;
+    user.streamQuality = null;
 
     socket.to(prevChannel).emit('peer-left', { peerId: socket.id, name: user.name });
     io.emit('directory-update', getDirectoryState());
   });
 
-  // Sinalização WebRTC (Offer, Answer, ICE Candidates)
   socket.on('webrtc-signal', ({ to, data }) => {
     const sender = users.get(socket.id);
     if (!sender) return;
@@ -120,15 +115,15 @@ io.on('connection', (socket) => {
     });
   });
 
-  // Atualizar estado (Mute, Deafen, Partilha de Ecrã)
-  socket.on('update-media-state', ({ muted, deafened, sharing, screenStreamId }) => {
+  socket.on('update-media-state', (patch) => {
     const user = users.get(socket.id);
     if (!user) return;
 
-    if (typeof muted === 'boolean') user.muted = muted;
-    if (typeof deafened === 'boolean') user.deafened = deafened;
-    if (typeof sharing === 'boolean') user.sharing = sharing;
-    if (screenStreamId !== undefined) user.screenStreamId = screenStreamId;
+    if (typeof patch.muted === 'boolean') user.muted = patch.muted;
+    if (typeof patch.deafened === 'boolean') user.deafened = patch.deafened;
+    if (typeof patch.sharing === 'boolean') user.sharing = patch.sharing;
+    if (typeof patch.camera === 'boolean') user.camera = patch.camera;
+    if (patch.streamQuality !== undefined) user.streamQuality = patch.streamQuality;
 
     if (user.channel) {
       io.to(user.channel).emit('peer-media-updated', user);
@@ -136,24 +131,47 @@ io.on('connection', (socket) => {
     io.emit('directory-update', getDirectoryState());
   });
 
-  // Chat de texto da sala
-  socket.on('chat-message', ({ text }) => {
+  // Sincronização instantânea de quem está a falar
+  socket.on('speaking-state', ({ speaking }) => {
     const user = users.get(socket.id);
-    if (!user || !text || !text.trim()) return;
+    if (!user || user.speaking === speaking) return;
+    user.speaking = Boolean(speaking);
+    if (user.channel) {
+      socket.to(user.channel).emit('peer-speaking', { peerId: socket.id, speaking: user.speaking });
+    }
+    io.emit('directory-update', getDirectoryState());
+  });
+
+  // Reações flutuantes na sala
+  socket.on('send-reaction', ({ emoji }) => {
+    const user = users.get(socket.id);
+    if (!user || !user.channel) return;
+    io.to(user.channel).emit('call-reaction', {
+      peerId: socket.id,
+      name: user.name,
+      emoji
+    });
+  });
+
+  // Chat com suporte a texto, links e imagens coladas (Ctrl+V)
+  socket.on('chat-message', ({ text, image }) => {
+    const user = users.get(socket.id);
+    if (!user) return;
+    if ((!text || !text.trim()) && !image) return;
 
     const message = {
       id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
       senderId: socket.id,
       senderName: user.name,
       senderColor: user.color,
-      text: text.trim().slice(0, 1000),
+      text: text ? text.trim().slice(0, 1200) : '',
+      image: image || null,
       timestamp: new Date().toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit' })
     };
 
     io.emit('chat-message', message);
   });
 
-  // Medidor de Ping
   socket.on('ping-check', (cb) => {
     if (typeof cb === 'function') cb();
   });
@@ -171,5 +189,5 @@ io.on('connection', (socket) => {
 });
 
 server.listen(PORT, () => {
-  console.log(`Pulse Voice Server ativo na porta ${PORT}`);
+  console.log(`Pulse Voice v2.0 ativo na porta ${PORT}`);
 });
