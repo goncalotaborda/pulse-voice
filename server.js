@@ -14,9 +14,7 @@ const io = new Server(server, {
 const PORT = process.env.PORT || 3000;
 const SERVER_PASSWORD = process.env.SERVER_PASSWORD || '';
 
-app.get('/', (_, res) => {
-  res.send('Pulse Studio Desktop Server Online.');
-});
+app.get('/', (_, res) => res.send('Pulse Studio Server v5.0 Online.'));
 
 const CHANNELS = [
   { id: 'lobby', name: 'Lounge Principal', icon: 'sparkles' },
@@ -39,7 +37,7 @@ function getDirectoryState() {
 }
 
 io.on('connection', (socket) => {
-  socket.on('authenticate', ({ name, password, color }, callback) => {
+  socket.on('authenticate', ({ name, password, color, avatar }, callback) => {
     if (SERVER_PASSWORD && password !== SERVER_PASSWORD) {
       return callback({ ok: false, error: 'Palavra-passe do servidor incorreta.' });
     }
@@ -48,6 +46,7 @@ io.on('connection', (socket) => {
       id: socket.id,
       name: (name || 'Utilizador').trim().slice(0, 22),
       color: color || '#6366f1',
+      avatar: avatar || null,
       channel: null,
       muted: false,
       deafened: false,
@@ -113,6 +112,8 @@ io.on('connection', (socket) => {
     if (typeof patch.sharing === 'boolean') user.sharing = patch.sharing;
     if (patch.streamQuality !== undefined) user.streamQuality = patch.streamQuality;
     if (patch.activity !== undefined) user.activity = patch.activity;
+    if (patch.avatar !== undefined) user.avatar = patch.avatar;
+    if (patch.name) user.name = patch.name.trim().slice(0, 22);
 
     if (user.channel) io.to(user.channel).emit('peer-media-updated', user);
     io.emit('directory-update', getDirectoryState());
@@ -135,6 +136,7 @@ io.on('connection', (socket) => {
       id: Date.now().toString(36),
       senderName: user.name,
       senderColor: user.color,
+      senderAvatar: user.avatar,
       text: text ? text.trim().slice(0, 1200) : '',
       image: image || null,
       timestamp: new Date().toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit' })
@@ -153,4 +155,4 @@ io.on('connection', (socket) => {
   });
 });
 
-server.listen(PORT, () => console.log(`Pulse Desktop Backend na porta ${PORT}`));
+server.listen(PORT, () => console.log(`Pulse Studio Server v5.0 na porta ${PORT}`));
