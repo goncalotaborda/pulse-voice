@@ -17,10 +17,9 @@ const SERVER_PASSWORD = process.env.SERVER_PASSWORD || '';
 app.get('/', (_, res) => res.send('Pulse Studio Server v5.0 Online.'));
 
 const CHANNELS = [
-  { id: 'lobby', name: 'Lounge Principal', icon: 'sparkles' },
-  { id: 'gaming', name: 'Gaming & Squad', icon: 'gamepad-2' },
-  { id: 'cinema', name: 'Cinema & Streams', icon: 'tv' },
-  { id: 'chill', name: 'Chill & Estudo', icon: 'coffee' }
+  { id: 'global', name: 'Global', icon: 'globe' },
+  { id: 'cinema', name: 'Cinema & Streaming', icon: 'tv' },
+  { id: 'music', name: 'Música', icon: 'music' }
 ];
 
 const users = new Map();

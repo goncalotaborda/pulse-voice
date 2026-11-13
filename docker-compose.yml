@@ -9,7 +9,7 @@ services:
       - "3050:3000"
     environment:
       - PORT=3000
-      - SERVER_PASSWORD=amigos2026
+      - SERVER_PASSWORD=teste123
 
   pulse-tunnel:
     image: cloudflare/cloudflared:latest
