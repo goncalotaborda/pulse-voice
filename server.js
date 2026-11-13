@@ -1,3 +1,7 @@
+const { AccessToken } = require('livekit-server-sdk');
+const LIVEKIT_API_KEY = process.env.LIVEKIT_API_KEY || 'concord_api_key';
+const LIVEKIT_API_SECRET = process.env.LIVEKIT_API_SECRET || 'concord_secret_key_oracle_2026_x9k2m8';
+const LIVEKIT_URL = process.env.LIVEKIT_URL || 'ws://100.123.196.21:7880';
 const express = require('express');
 const http = require('http');
 const https = require('https');
@@ -765,6 +769,36 @@ app.delete('/soundboard/:id', (req, res) => {
   res.json({ ok: true });
 });
 
+app.post('/livekit-token', async (req, res) => {
+  const { username, password, channelId } = req.body || {};
+  const account = verifyUserCredentials(username, password);
+  if (!account) {
+    return res.status(401).json({ ok: false, error: 'Sessão inválida.' });
+  }
+  if (!CHANNELS.some(c => c.id === channelId)) {
+    return res.status(400).json({ ok: false, error: 'Canal inválido.' });
+  }
+
+  try {
+    const at = new AccessToken(LIVEKIT_API_KEY, LIVEKIT_API_SECRET, {
+      identity: account.username,
+      name: account.username,
+      ttl: '6h'
+    });
+    at.addGrant({
+      roomJoin: true,
+      room: `concord-${channelId}`,
+      canPublish: true,
+      canSubscribe: true,
+      canPublishData: true
+    });
+
+    const token = await at.toJwt();
+    res.json({ ok: true, token, url: LIVEKIT_URL });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: 'Erro ao gerar token SFU.' });
+  }
+});
 // ============================================================================
 // SOCKET.IO: CHAMADAS, SOUNDBOARD, CANAL MÚSICA E CHAT GLOBAL
 // ============================================================================

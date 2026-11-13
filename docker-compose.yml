@@ -1,3 +1,5 @@
+version: '3.8'
+
 services:
   pulse-voice:
     build: .
@@ -9,16 +11,23 @@ services:
       - PORT=3000
       - SERVER_PASSWORD=teste123
       - DATA_DIR=/app/data
+      - LIVEKIT_API_KEY=concord_api_key
+      - LIVEKIT_API_SECRET=concord_secret_key_oracle_2026_x9k2m8
+      - LIVEKIT_URL=ws://100.123.196.21:7880
     volumes:
-      - concord_data:/app/data
+      - pulse_data:/app/data
 
-  pulse-tunnel:
-    image: cloudflare/cloudflared:latest
-    container_name: pulse-tunnel
+  livekit:
+    image: livekit/livekit-server:latest
+    container_name: concord-livekit
     restart: unless-stopped
-    command: tunnel --no-autoupdate --url http://pulse-voice:3000
-    depends_on:
-      - pulse-voice
+    command: --config /etc/livekit.yaml
+    ports:
+      - "7880:7880"
+      - "7881:7881"
+      - "50000-50100:50000-50100/udp"
+    volumes:
+      - ./livekit.yaml:/etc/livekit.yaml:ro
 
 volumes:
-  concord_data:
+  pulse_data:
