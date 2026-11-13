@@ -9,12 +9,12 @@ services:
       - "3050:3000"
     environment:
       - PORT=3000
-      - SERVER_PASSWORD=teste123
+      - SERVER_PASSWORD=amigos2026
 
   pulse-tunnel:
     image: cloudflare/cloudflared:latest
     container_name: pulse-tunnel
     restart: unless-stopped
-    command: tunnel --no-autoupdate run --token ${TUNNEL_TOKEN}
+    command: tunnel --no-autoupdate --url http://pulse-voice:3000
     depends_on:
       - pulse-voice
