@@ -1,5 +1,6 @@
 const express = require('express');
 const http = require('http');
+const https = require('https');
 const { Server } = require('socket.io');
 const fs = require('fs');
 const path = require('path');
@@ -14,6 +15,9 @@ const io = new Server(server, {
 
 const PORT = process.env.PORT || 3000;
 const SERVER_PASSWORD = process.env.SERVER_PASSWORD || 'teste123';
+const SPOTIFY_CLIENT_ID = (process.env.SPOTIFY_CLIENT_ID || '').trim();
+const SPOTIFY_CLIENT_SECRET = (process.env.SPOTIFY_CLIENT_SECRET || '').trim();
+
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const UPLOADS_DIR = path.join(DATA_DIR, 'uploads');
 const SOUNDBOARD_DIR = path.join(DATA_DIR, 'soundboard');
@@ -29,7 +33,6 @@ const CHANNELS = [
   { id: 'music', name: 'Música', icon: 'music' }
 ];
 
-// CORS global para uploads HTTP e ficheiros
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
   res.header('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
@@ -42,12 +45,11 @@ app.use(express.json({ limit: '6mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/soundboard-files', express.static(SOUNDBOARD_DIR));
 
-// Base de dados persistente
 let db = {
-  users: {},      // userKey -> { username, passHash, salt, color, avatar, createdAt }
-  messages: [],   // últimas 60 mensagens/ficheiros do Chat Global
-  soundboard: [], // lista de sons { id, name, emoji, filename, duration, createdBy }
-  files: []       // registo de ficheiros temporários (24h)
+  users: {},
+  messages: [],
+  soundboard: [],
+  files: []
 };
 
 function loadDatabase() {
@@ -91,7 +93,6 @@ function verifyUserCredentials(username, password) {
   return checkHash === account.passHash ? account : null;
 }
 
-// Limpeza automática de ficheiros com mais de 24 horas
 function cleanupExpiredFiles() {
   const now = Date.now();
   let changed = false;
@@ -123,10 +124,384 @@ setInterval(cleanupExpiredFiles, 10 * 60 * 1000);
 cleanupExpiredFiles();
 
 // ============================================================================
-// ENDPOINTS HTTP: UPLOAD DE FICHEIROS (ATÉ 100 MB / 24H) E SOUNDBOARD
+// PEDIDOS HTTPS E EXTRATORES COMPLETOS (SPOTIFY + APPLE MUSIC + YOUTUBE)
 // ============================================================================
-const MAX_UPLOAD_BYTES = 100 * 1024 * 1024; // 100 MB
-const FILE_TTL_MS = 24 * 60 * 60 * 1000;    // 24 Horas
+function httpsRequestText(targetUrl, options = {}, redirects = 0) {
+  return new Promise((resolve, reject) => {
+    if (redirects > 5) return reject(new Error('Demasiados redirecionamentos'));
+    const parsedUrl = new URL(targetUrl);
+    const reqOpts = {
+      hostname: parsedUrl.hostname,
+      port: parsedUrl.port || 443,
+      path: parsedUrl.pathname + parsedUrl.search,
+      method: options.method || 'GET',
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+        'Accept-Language': 'pt-PT,pt;q=0.9,en;q=0.8',
+        ...(options.headers || {})
+      },
+      timeout: 10000
+    };
+
+    const req = https.request(reqOpts, (res) => {
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        const nextUrl = new URL(res.headers.location, targetUrl).toString();
+        return resolve(httpsRequestText(nextUrl, options, redirects + 1));
+      }
+      let data = '';
+      res.setEncoding('utf8');
+      res.on('data', chunk => { data += chunk; });
+      res.on('end', () => resolve({ status: res.statusCode, body: data }));
+    });
+
+    req.on('error', reject);
+    req.on('timeout', () => { req.destroy(); reject(new Error('Timeout')); });
+    if (options.body) req.write(options.body);
+    req.end();
+  });
+}
+
+async function fetchHttpsText(targetUrl, headers = {}) {
+  const res = await httpsRequestText(targetUrl, { method: 'GET', headers });
+  return res.body;
+}
+
+// Token de acesso Spotify (Client Credentials) em cache
+let cachedSpotifyToken = { token: '', expiresAt: 0 };
+
+async function getSpotifyApiToken() {
+  if (!SPOTIFY_CLIENT_ID || !SPOTIFY_CLIENT_SECRET || SPOTIFY_CLIENT_ID.startsWith('cola_aqui')) {
+    return null;
+  }
+  if (cachedSpotifyToken.token && Date.now() < cachedSpotifyToken.expiresAt) {
+    return cachedSpotifyToken.token;
+  }
+
+  const basicAuth = Buffer.from(`${SPOTIFY_CLIENT_ID}:${SPOTIFY_CLIENT_SECRET}`).toString('base64');
+  const res = await httpsRequestText('https://accounts.spotify.com/api/token', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Basic ${basicAuth}`,
+      'Content-Type': 'application/x-www-form-urlencoded'
+    },
+    body: 'grant_type=client_credentials'
+  });
+
+  if (res.status !== 200) return null;
+  const json = JSON.parse(res.body);
+  if (!json.access_token) return null;
+
+  cachedSpotifyToken = {
+    token: json.access_token,
+    expiresAt: Date.now() + ((json.expires_in || 3600) - 60) * 1000
+  };
+  return cachedSpotifyToken.token;
+}
+
+async function fetchFullSpotifyPlaylistViaApi(kind, id, addedBy) {
+  const token = await getSpotifyApiToken();
+  if (!token) return null;
+
+  const authHeaders = { 'Authorization': `Bearer ${token}` };
+  const metaRes = await httpsRequestText(`https://api.spotify.com/v1/${kind}s/${id}`, { headers: authHeaders });
+  if (metaRes.status !== 200) return null;
+
+  const meta = JSON.parse(metaRes.body);
+  const sourceName = meta.name || 'Spotify Playlist';
+  const defaultCover = meta.images?.[0]?.url || '';
+  const tracks = [];
+
+  if (kind === 'track') {
+    const artists = Array.isArray(meta.artists) ? meta.artists.map(a => a.name).join(', ') : 'Spotify';
+    return {
+      sourceName,
+      tracks: [{
+        id: `trk-${Date.now()}-${crypto.randomBytes(2).toString('hex')}`,
+        title: meta.name || 'Faixa Spotify',
+        artist: artists,
+        cover: meta.album?.images?.[0]?.url || defaultCover,
+        platform: 'Spotify',
+        youtubeId: null,
+        addedBy
+      }]
+    };
+  }
+
+  // Paginação completa de 100 em 100 (suporta playlists com 900+ músicas)
+  let nextUrl = kind === 'playlist'
+    ? `https://api.spotify.com/v1/playlists/${id}/items?limit=100&offset=0`
+    : `https://api.spotify.com/v1/albums/${id}/tracks?limit=50&offset=0`;
+
+  let usedLegacyEndpoint = false;
+
+  while (nextUrl && tracks.length < 1500) {
+    const pageRes = await httpsRequestText(nextUrl, { headers: authHeaders });
+    if (pageRes.status !== 200) {
+      if (kind === 'playlist' && !usedLegacyEndpoint) {
+        usedLegacyEndpoint = true;
+        nextUrl = `https://api.spotify.com/v1/playlists/${id}/tracks?limit=100&offset=0`;
+        continue;
+      }
+      break;
+    }
+
+    const pageJson = JSON.parse(pageRes.body);
+    const list = pageJson.items || [];
+
+    for (const entry of list) {
+      const t = kind === 'playlist' ? (entry.item || entry.track) : entry;
+      if (!t || !t.name) continue;
+      const artists = Array.isArray(t.artists) ? t.artists.map(a => a.name).join(', ') : 'Spotify';
+      const cover = t.album?.images?.[0]?.url || defaultCover;
+
+      tracks.push({
+        id: `trk-${Date.now()}-${tracks.length}-${crypto.randomBytes(2).toString('hex')}`,
+        title: t.name,
+        artist: artists,
+        cover,
+        platform: 'Spotify',
+        youtubeId: null,
+        addedBy
+      });
+    }
+
+    nextUrl = pageJson.next || null;
+  }
+
+  return tracks.length > 0 ? { sourceName, tracks } : null;
+}
+
+// Extrator Completo Apple Music (lê o token público da página web e pagina de 100 em 100 sem chaves)
+async function fetchFullAppleMusic(url, html, addedBy) {
+  const titleMatch = html.match(/<title>(.*?)<\/title>/i);
+  const pageTitle = titleMatch ? titleMatch[1].replace(/\s*-\s*Apple Music.*$/i, '').trim() : 'Apple Music';
+
+  const parsedUrl = new URL(url);
+  const pathParts = parsedUrl.pathname.split('/').filter(Boolean);
+  // Ex: /pt/playlist/nome-da-playlist/pl.u-xxxxx
+  const storefront = pathParts[0] || 'pt';
+  const kind = pathParts[1] === 'album' ? 'albums' : 'playlists';
+  const appleId = pathParts[pathParts.length - 1];
+
+  try {
+    const scriptMatch = html.match(/src="(\/assets\/index[^"]+\.js)"/i);
+    if (scriptMatch && appleId) {
+      const jsUrl = `https://music.apple.com${scriptMatch[1]}`;
+      const jsCode = await fetchHttpsText(jsUrl);
+      const jwtMatch = jsCode.match(/eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6[a-zA-Z0-9._-]+/);
+
+      if (jwtMatch) {
+        const ampHeaders = {
+          'Authorization': `Bearer ${jwtMatch[0]}`,
+          'Origin': 'https://music.apple.com',
+          'Referer': 'https://music.apple.com/'
+        };
+
+        let nextPath = `/v1/catalog/${storefront}/${kind}/${appleId}/tracks?l=pt-PT&limit=100&offset=0`;
+        const tracks = [];
+
+        while (nextPath && tracks.length < 1500) {
+          const apiRes = await httpsRequestText(`https://amp-api.music.apple.com${nextPath}`, { headers: ampHeaders });
+          if (apiRes.status !== 200) break;
+
+          const json = JSON.parse(apiRes.body);
+          const items = json.data || [];
+
+          for (const item of items) {
+            const attr = item.attributes;
+            if (!attr || !attr.name) continue;
+            const rawArt = attr.artwork?.url || '';
+            const cover = rawArt ? rawArt.replace('{w}', '300').replace('{h}', '300') : '';
+
+            tracks.push({
+              id: `trk-${Date.now()}-${tracks.length}-${crypto.randomBytes(2).toString('hex')}`,
+              title: attr.name,
+              artist: attr.artistName || 'Apple Music',
+              cover,
+              platform: 'Apple Music',
+              youtubeId: null,
+              addedBy
+            });
+          }
+
+          nextPath = json.next || null;
+        }
+
+        if (tracks.length > 0) {
+          return { sourceName: pageTitle, tracks };
+        }
+      }
+    }
+  } catch (e) {}
+
+  // Fallback: ler JSON-LD embutido no HTML
+  const tracks = [];
+  const schemaRegex = /<script type="application\/ld\+json">([\s\S]*?)<\/script>/gi;
+  let m;
+  while ((m = schemaRegex.exec(html)) !== null) {
+    try {
+      const parsed = JSON.parse(m[1]);
+      const items = parsed?.track || parsed?.tracks || [];
+      if (Array.isArray(items) && items.length > 0) {
+        items.forEach((item, idx) => {
+          const tName = item.name || item.title;
+          const aName = item.byArtist?.name || (Array.isArray(item.byArtist) ? item.byArtist[0]?.name : '') || pageTitle;
+          if (tName) {
+            tracks.push({
+              id: `trk-${Date.now()}-${idx}-${crypto.randomBytes(2).toString('hex')}`,
+              title: tName,
+              artist: aName,
+              cover: '',
+              platform: 'Apple Music',
+              youtubeId: null,
+              addedBy
+            });
+          }
+        });
+      }
+    } catch (e) {}
+  }
+
+  return {
+    sourceName: pageTitle,
+    tracks: tracks.length > 0 ? tracks : [{
+      id: `trk-${Date.now()}-${crypto.randomBytes(2).toString('hex')}`,
+      title: pageTitle,
+      artist: 'Apple Music',
+      cover: '',
+      platform: 'Apple Music',
+      youtubeId: null,
+      addedBy
+    }]
+  };
+}
+
+async function resolveYouTubeVideo(query) {
+  try {
+    const searchUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(query + ' official audio')}`;
+    const html = await fetchHttpsText(searchUrl);
+    const match = html.match(/"videoRenderer":\{"videoId":"([a-zA-Z0-9_-]{11})"/);
+    if (match && match[1]) {
+      return {
+        videoId: match[1],
+        thumbnail: `https://i.ytimg.com/vi/${match[1]}/hqdefault.jpg`
+      };
+    }
+  } catch (e) {}
+  return null;
+}
+
+async function extractTracksFromUrl(rawUrl, addedBy) {
+  let url = String(rawUrl || '').trim();
+  if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
+
+  // 1. Spotify (tenta API completa 900+ faixas; se não houver chaves, usa embed até 100 faixas)
+  const spMatch = url.match(/open\.spotify\.com\/(?:intl-[a-z]+\/)?(playlist|album|track)\/([a-zA-Z0-9]+)/i);
+  if (spMatch) {
+    const kind = spMatch[1].toLowerCase();
+    const id = spMatch[2];
+
+    const apiResult = await fetchFullSpotifyPlaylistViaApi(kind, id, addedBy);
+    if (apiResult) return apiResult;
+
+    const html = await fetchHttpsText(`https://open.spotify.com/embed/${kind}/${id}`);
+    const nextDataMatch = html.match(/<script id="__NEXT_DATA__" type="application\/json">([\s\S]*?)<\/script>/);
+    if (!nextDataMatch) throw new Error('Não foi possível ler a playlist do Spotify. Verifica se é pública.');
+
+    const json = JSON.parse(nextDataMatch[1]);
+    const entity = json?.props?.pageProps?.state?.data?.entity;
+    if (!entity) throw new Error('Playlist do Spotify vazia ou privada.');
+
+    const playlistCover = entity.coverArt?.sources?.[0]?.url || entity.visualIdentity?.image?.[0]?.url || '';
+    const playlistName = entity.name || 'Spotify Playlist';
+
+    if (Array.isArray(entity.trackList) && entity.trackList.length > 0) {
+      return {
+        sourceName: playlistName,
+        tracks: entity.trackList.map((t, idx) => ({
+          id: `trk-${Date.now()}-${idx}-${crypto.randomBytes(2).toString('hex')}`,
+          title: t.title || 'Faixa sem título',
+          artist: t.subtitle || 'Spotify',
+          cover: playlistCover,
+          platform: 'Spotify',
+          youtubeId: null,
+          addedBy
+        }))
+      };
+    }
+
+    const artistNames = Array.isArray(entity.artists) ? entity.artists.map(a => a.name).join(', ') : 'Spotify';
+    return {
+      sourceName: entity.name || 'Spotify',
+      tracks: [{
+        id: `trk-${Date.now()}-${crypto.randomBytes(2).toString('hex')}`,
+        title: entity.name || 'Faixa Spotify',
+        artist: artistNames,
+        cover: playlistCover,
+        platform: 'Spotify',
+        youtubeId: null,
+        addedBy
+      }]
+    };
+  }
+
+  // 2. Apple Music (carrega playlists completas sem limite de 100)
+  if (/music\.apple\.com/i.test(url)) {
+    const html = await fetchHttpsText(url);
+    return await fetchFullAppleMusic(url, html, addedBy);
+  }
+
+  // 3. YouTube (Link direto)
+  const ytMatch = url.match(/(?:youtube\.com\/(?:watch\?v=|shorts\/|live\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/i);
+  if (ytMatch) {
+    const videoId = ytMatch[1];
+    let title = 'Vídeo do YouTube';
+    let author = 'YouTube';
+    try {
+      const oembedRaw = await fetchHttpsText(`https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`);
+      const oembed = JSON.parse(oembedRaw);
+      if (oembed.title) title = oembed.title;
+      if (oembed.author_name) author = oembed.author_name;
+    } catch (e) {}
+
+    return {
+      sourceName: title,
+      tracks: [{
+        id: `trk-${Date.now()}-${crypto.randomBytes(2).toString('hex')}`,
+        title,
+        artist: author,
+        cover: `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
+        platform: 'YouTube',
+        youtubeId: videoId,
+        addedBy
+      }]
+    };
+  }
+
+  // 4. Pesquisa direta por nome da música/artista
+  const queryText = rawUrl.trim();
+  const resolved = await resolveYouTubeVideo(queryText);
+  if (!resolved) throw new Error('Não foi encontrada nenhuma música correspondente.');
+
+  return {
+    sourceName: queryText,
+    tracks: [{
+      id: `trk-${Date.now()}-${crypto.randomBytes(2).toString('hex')}`,
+      title: queryText,
+      artist: 'Pesquisa Direta',
+      cover: resolved.thumbnail,
+      platform: 'YouTube',
+      youtubeId: resolved.videoId,
+      addedBy
+    }]
+  };
+}
+
+// ============================================================================
+// ENDPOINTS HTTP: UPLOAD (ATÉ 100 MB / 24H) E SOUNDBOARD
+// ============================================================================
+const MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
+const FILE_TTL_MS = 24 * 60 * 60 * 1000;
 
 app.post('/upload', (req, res) => {
   const username = decodeURIComponent(req.headers['x-username'] || '');
@@ -162,15 +537,14 @@ app.post('/upload', (req, res) => {
   writeStream.on('finish', () => {
     if (aborted) return;
     const expiresAt = Date.now() + FILE_TTL_MS;
-    const fileRecord = {
+    db.files.push({
       id: fileId,
       originalName: safeOriginalName,
       storedName,
       size: receivedBytes,
       expiresAt,
       uploadedBy: account.username
-    };
-    db.files.push(fileRecord);
+    });
 
     const timestamp = new Date().toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit' });
     const msg = {
@@ -216,7 +590,6 @@ app.get('/files/:fileId/:filename', (req, res) => {
   res.download(fullPath, record.originalName);
 });
 
-// Adicionar som ao Soundboard (máx. 5s)
 app.post('/soundboard', (req, res) => {
   const { username, password, name, emoji, audioBase64, duration } = req.body || {};
   const account = verifyUserCredentials(username, password);
@@ -272,14 +645,37 @@ app.delete('/soundboard/:id', (req, res) => {
 });
 
 // ============================================================================
-// SOCKET.IO: CHAMADAS, SOUNDBOARD NA CALL, MÚSICA E CHAT GLOBAL
+// SOCKET.IO: CHAMADAS, SOUNDBOARD, CANAL MÚSICA E CHAT GLOBAL
 // ============================================================================
 const activeSessions = new Map();
+
 let musicRoomState = {
-  currentUrl: '',
-  currentTitle: '',
-  queue: [] // [{ id, url, title, platform, addedBy }]
+  playlistTitle: '',
+  currentTrack: null,
+  isPlaying: true,
+  shuffle: false,
+  queue: []
 };
+
+async function startTrackInMusicRoom(track) {
+  if (!track) {
+    musicRoomState.currentTrack = null;
+    io.to('music').emit('music-state-update', musicRoomState);
+    return;
+  }
+
+  if (!track.youtubeId) {
+    const resolved = await resolveYouTubeVideo(`${track.artist} - ${track.title}`);
+    if (resolved) {
+      track.youtubeId = resolved.videoId;
+      if (!track.cover) track.cover = resolved.thumbnail;
+    }
+  }
+
+  musicRoomState.currentTrack = track;
+  musicRoomState.isPlaying = true;
+  io.to('music').emit('music-state-update', musicRoomState);
+}
 
 function buildDirectoryState() {
   const occupants = {};
@@ -483,7 +879,6 @@ io.on('connection', (socket) => {
     broadcastDirectory();
   });
 
-  // Tocar som do Soundboard APENAS na call onde o utilizador está no momento
   socket.on('play-soundboard', ({ soundId }) => {
     const user = activeSessions.get(socket.id);
     if (!user || !user.channelId) return;
@@ -500,46 +895,93 @@ io.on('connection', (socket) => {
     });
   });
 
-  // Sincronização do Canal Música (Jukebox Colaborativa)
-  socket.on('music-action', (payload) => {
+  socket.on('music-action', async (payload, cb) => {
     const user = activeSessions.get(socket.id);
-    if (!user || user.channelId !== 'music') return;
+    if (!user || user.channelId !== 'music') return cb?.({ ok: false });
 
-    if (payload.action === 'play-now') {
-      musicRoomState.currentUrl = payload.url;
-      musicRoomState.currentTitle = payload.title || payload.url;
-      io.to('music').emit('music-state-update', musicRoomState);
-    } else if (payload.action === 'queue-add') {
-      const item = {
-        id: `mq-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-        url: payload.url,
-        title: payload.title || payload.url,
-        platform: payload.platform || 'Música',
-        addedBy: user.name
-      };
-      musicRoomState.queue.push(item);
-      if (!musicRoomState.currentUrl) {
-        musicRoomState.currentUrl = item.url;
-        musicRoomState.currentTitle = item.title;
+    try {
+      if (payload.action === 'load-url') {
+        const extracted = await extractTracksFromUrl(payload.url, user.name);
+        if (!extracted.tracks.length) {
+          return cb?.({ ok: false, error: 'Nenhuma faixa encontrada neste link.' });
+        }
+
+        if (payload.playNow) {
+          musicRoomState.playlistTitle = extracted.sourceName;
+          musicRoomState.queue = [...extracted.tracks];
+          const firstIdx = musicRoomState.shuffle
+            ? Math.floor(Math.random() * musicRoomState.queue.length)
+            : 0;
+          const firstTrack = musicRoomState.queue[firstIdx];
+          await startTrackInMusicRoom(firstTrack);
+        } else {
+          if (!musicRoomState.playlistTitle) {
+            musicRoomState.playlistTitle = extracted.sourceName;
+          }
+          musicRoomState.queue.push(...extracted.tracks);
+          if (!musicRoomState.currentTrack) {
+            await startTrackInMusicRoom(musicRoomState.queue[0]);
+          } else {
+            io.to('music').emit('music-state-update', musicRoomState);
+          }
+        }
+        return cb?.({ ok: true });
       }
-      io.to('music').emit('music-state-update', musicRoomState);
-    } else if (payload.action === 'queue-remove') {
-      musicRoomState.queue = musicRoomState.queue.filter(q => q.id !== payload.id);
-      io.to('music').emit('music-state-update', musicRoomState);
-    } else if (payload.action === 'next') {
-      if (musicRoomState.queue.length > 0) {
-        const idx = payload.shuffle
-          ? Math.floor(Math.random() * musicRoomState.queue.length)
-          : 0;
-        const [chosen] = musicRoomState.queue.splice(idx, 1);
-        musicRoomState.currentUrl = chosen.url;
-        musicRoomState.currentTitle = chosen.title;
+
+      if (payload.action === 'play-track') {
+        const target = musicRoomState.queue.find(t => t.id === payload.id);
+        if (target) {
+          await startTrackInMusicRoom(target);
+        }
+        return cb?.({ ok: true });
       }
-      io.to('music').emit('music-state-update', musicRoomState);
-    } else if (payload.action === 'stop') {
-      musicRoomState.currentUrl = '';
-      musicRoomState.currentTitle = '';
-      io.to('music').emit('music-state-update', musicRoomState);
+
+      if (payload.action === 'toggle-play') {
+        if (musicRoomState.currentTrack) {
+          musicRoomState.isPlaying = !musicRoomState.isPlaying;
+          io.to('music').emit('music-state-update', musicRoomState);
+        }
+        return cb?.({ ok: true });
+      }
+
+      if (payload.action === 'toggle-shuffle') {
+        musicRoomState.shuffle = !musicRoomState.shuffle;
+        io.to('music').emit('music-state-update', musicRoomState);
+        return cb?.({ ok: true });
+      }
+
+      if (payload.action === 'next') {
+        if (musicRoomState.queue.length > 0) {
+          const curIdx = musicRoomState.currentTrack
+            ? musicRoomState.queue.findIndex(t => t.id === musicRoomState.currentTrack.id)
+            : -1;
+
+          let nextIdx = 0;
+          if (musicRoomState.shuffle && musicRoomState.queue.length > 1) {
+            do {
+              nextIdx = Math.floor(Math.random() * musicRoomState.queue.length);
+            } while (nextIdx === curIdx);
+          } else {
+            nextIdx = (curIdx + 1) % musicRoomState.queue.length;
+          }
+
+          await startTrackInMusicRoom(musicRoomState.queue[nextIdx]);
+        }
+        return cb?.({ ok: true });
+      }
+
+      if (payload.action === 'queue-remove') {
+        const wasCurrent = musicRoomState.currentTrack?.id === payload.id;
+        musicRoomState.queue = musicRoomState.queue.filter(t => t.id !== payload.id);
+        if (wasCurrent) {
+          await startTrackInMusicRoom(musicRoomState.queue[0] || null);
+        } else {
+          io.to('music').emit('music-state-update', musicRoomState);
+        }
+        return cb?.({ ok: true });
+      }
+    } catch (err) {
+      return cb?.({ ok: false, error: err.message || 'Erro ao carregar playlist.' });
     }
   });
 
