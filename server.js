@@ -357,7 +357,7 @@ async function fetchFullSpotifyPlaylistViaApi(kind, id, addedBy) {
   return tracks.length > 0 ? { sourceName, tracks } : null;
 }
 
-// Extrator Completo Apple Music (carrega as 332 / 900+ músicas + capas corrigidas)
+// Substitui apenas a função fetchFullAppleMusic no teu C:\Projetos\Pulse-voice\server.js
 async function fetchFullAppleMusic(url, html, addedBy) {
   const titleMatch = html.match(/<title>(.*?)<\/title>/i);
   const pageTitle = titleMatch ? titleMatch[1].replace(/\s*-\s*Apple Music.*$/i, '').trim() : 'Apple Music';
@@ -370,8 +370,9 @@ async function fetchFullAppleMusic(url, html, addedBy) {
 
   const tracks = [];
   const seenKeys = new Set();
+  let embeddedNextPath = null;
 
-  // 1. Ler as primeiras 300 faixas do bloco JSON embutido
+  // 1. Ler as primeiras 300 faixas e o link "next" embutido no JSON da Apple
   const serverDataMatch = html.match(/<script type="application\/json" id="serialized-server-data">([\s\S]*?)<\/script>/i);
   if (serverDataMatch) {
     try {
@@ -381,6 +382,9 @@ async function fetchFullAppleMusic(url, html, addedBy) {
         if (Array.isArray(node)) {
           node.forEach(walk);
           return;
+        }
+        if (typeof node.next === 'string' && node.next.includes('/tracks')) {
+          embeddedNextPath = node.next;
         }
         if (node.title && node.artistName && (node.contentDescriptor || node.duration || node.trackNumber)) {
           const key = `${node.title}::${node.artistName}`;
@@ -405,7 +409,7 @@ async function fetchFullAppleMusic(url, html, addedBy) {
     } catch (e) {}
   }
 
-  // 2. Paginar o restante (faixas 301 até 1500) usando platform=web na amp-api
+  // 2. Paginar as restantes faixas (301 até 1500) usando o token e o link next da Apple
   try {
     let jwtToken = null;
     const inlineJwt = html.match(/eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6[a-zA-Z0-9._-]+/);
@@ -430,11 +434,11 @@ async function fetchFullAppleMusic(url, html, addedBy) {
         'Referer': 'https://music.apple.com/'
       };
 
-      let nextPath = `/v1/catalog/${storefront}/${kind}/${appleId}/tracks?platform=web&l=pt-PT&limit=100&offset=${tracks.length}`;
+      let nextPath = embeddedNextPath || `/v1/catalog/${storefront}/${kind}/${appleId}/tracks?l=pt-PT&limit=100&offset=${tracks.length}`;
       while (nextPath && tracks.length < 1500) {
         const fullApiUrl = nextPath.startsWith('http')
           ? nextPath
-          : `https://amp-api.music.apple.com${nextPath}${nextPath.includes('platform=web') ? '' : '&platform=web'}`;
+          : `https://amp-api.music.apple.com${nextPath}`;
 
         const apiRes = await httpsRequestText(fullApiUrl, { headers: ampHeaders });
         if (apiRes.status !== 200) break;
@@ -450,7 +454,6 @@ async function fetchFullAppleMusic(url, html, addedBy) {
           seenKeys.add(key);
 
           const cover = formatAppleCoverUrl(attr.artwork?.url || '');
-
           tracks.push({
             id: `trk-${Date.now()}-${tracks.length}-${crypto.randomBytes(2).toString('hex')}`,
             title: attr.name,
