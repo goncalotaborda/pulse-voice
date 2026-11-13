@@ -124,7 +124,7 @@ setInterval(cleanupExpiredFiles, 10 * 60 * 1000);
 cleanupExpiredFiles();
 
 // ============================================================================
-// PEDIDOS HTTPS E EXTRATORES COMPLETOS (YOUTUBE / YT MUSIC / APPLE / SPOTIFY)
+// PEDIDOS HTTPS E EXTRATORES COMPLETOS (APPLE MUSIC / YT MUSIC / SPOTIFY)
 // ============================================================================
 function httpsRequestText(targetUrl, options = {}, redirects = 0) {
   return new Promise((resolve, reject) => {
@@ -166,55 +166,63 @@ async function fetchHttpsText(targetUrl, headers = {}) {
   return res.body;
 }
 
-// Extrator direto via API JSON do YouTube / YouTube Music (ignora HTML e suporta 900+ músicas)
+function formatAppleCoverUrl(rawUrl) {
+  if (!rawUrl || typeof rawUrl !== 'string') return '';
+  return rawUrl
+    .replace(/\{w\}/gi, '300')
+    .replace(/\{h\}/gi, '300')
+    .replace(/\{f\}/gi, 'jpg')
+    .replace(/\{c\}/gi, 'bb');
+}
+
+// Extrator direto via API YouTube Music (WEB_REMIX) e YouTube
 async function fetchFullYouTubePlaylist(listId, addedBy) {
   const browseId = listId.startsWith('VL') ? listId : `VL${listId}`;
   const ytContext = {
     client: {
-      clientName: 'WEB',
-      clientVersion: '2.20261101.00.00',
+      clientName: 'WEB_REMIX',
+      clientVersion: '1.20261101.01.00',
       hl: 'pt',
       gl: 'PT'
     }
   };
 
-  const firstRes = await httpsRequestText('https://www.youtube.com/youtubei/v1/browse?prettyPrint=false', {
+  const firstRes = await httpsRequestText('https://music.youtube.com/youtubei/v1/browse?prettyPrint=false', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'Origin': 'https://www.youtube.com',
-      'Referer': `https://www.youtube.com/playlist?list=${listId}`
+      'Origin': 'https://music.youtube.com',
+      'Referer': `https://music.youtube.com/playlist?list=${listId}`
     },
     body: JSON.stringify({ context: ytContext, browseId })
   });
 
-  if (firstRes.status !== 200) {
-    throw new Error('Não foi possível contactar o YouTube Music.');
-  }
-
-  const initialData = JSON.parse(firstRes.body);
-  const playlistTitle =
-    initialData?.metadata?.playlistMetadataRenderer?.title ||
-    initialData?.header?.playlistHeaderRenderer?.title?.simpleText ||
-    initialData?.header?.pageHeaderRenderer?.pageTitle ||
-    'YouTube Music Playlist';
-
   const tracks = [];
   const seenIds = new Set();
+  let playlistTitle = 'YouTube Music Playlist';
 
-  function parseRendererList(items) {
-    let nextContinuation = null;
-    if (!Array.isArray(items)) return null;
+  if (firstRes.status === 200) {
+    const json = JSON.parse(firstRes.body);
+    const walkYtMusic = (node) => {
+      if (!node || typeof node !== 'object') return;
+      if (Array.isArray(node)) {
+        node.forEach(walkYtMusic);
+        return;
+      }
 
-    for (const item of items) {
-      const v = item?.playlistVideoRenderer;
-      if (v && v.videoId && !seenIds.has(v.videoId)) {
-        const title = v.title?.runs?.map(r => r.text).join('') || v.title?.simpleText || '';
-        const artist = v.shortBylineText?.runs?.map(r => r.text).join('') || 'YouTube Music';
-        if (title && title !== '[Deleted video]' && title !== '[Private video]') {
-          seenIds.add(v.videoId);
-          const thumbs = v.thumbnail?.thumbnails || [];
-          const cover = thumbs.length ? thumbs[thumbs.length - 1].url.split('?')[0] : `https://i.ytimg.com/vi/${v.videoId}/hqdefault.jpg`;
+      if (node.musicResponsiveListItemRenderer) {
+        const item = node.musicResponsiveListItemRenderer;
+        const vidId = item?.playlistItemData?.videoId ||
+          item?.overlay?.musicItemThumbnailOverlayRenderer?.content?.musicPlayButtonRenderer?.playNavigationEndpoint?.watchEndpoint?.videoId;
+
+        const cols = item?.flexColumns || [];
+        const title = cols[0]?.musicResponsiveListItemFlexColumnRenderer?.text?.runs?.map(r => r.text).join('') || '';
+        const artist = cols[1]?.musicResponsiveListItemFlexColumnRenderer?.text?.runs?.[0]?.text || 'YouTube Music';
+
+        if (vidId && title && !seenIds.has(vidId)) {
+          seenIds.add(vidId);
+          const thumbs = item?.thumbnail?.musicThumbnailRenderer?.thumbnail?.thumbnails || [];
+          const cover = thumbs.length ? thumbs[thumbs.length - 1].url.split('?')[0] : `https://i.ytimg.com/vi/${vidId}/hqdefault.jpg`;
 
           tracks.push({
             id: `trk-${Date.now()}-${tracks.length}-${crypto.randomBytes(2).toString('hex')}`,
@@ -222,66 +230,24 @@ async function fetchFullYouTubePlaylist(listId, addedBy) {
             artist,
             cover,
             platform: 'YouTube Music',
-            youtubeId: v.videoId,
+            youtubeId: vidId,
             addedBy
           });
         }
       }
 
-      const cont = item?.continuationItemRenderer?.continuationEndpoint?.continuationCommand?.token;
-      if (cont) nextContinuation = cont;
-    }
-    return nextContinuation;
-  }
-
-  const tabs = initialData?.contents?.twoColumnBrowseResultsRenderer?.tabs || [];
-  let initialItems = [];
-  for (const tab of tabs) {
-    const sections = tab?.tabRenderer?.content?.sectionListRenderer?.contents || [];
-    for (const sec of sections) {
-      const playlistContents = sec?.itemSectionRenderer?.contents?.[0]?.playlistVideoListRenderer?.contents;
-      if (Array.isArray(playlistContents)) {
-        initialItems = playlistContents;
-        break;
+      if (node.musicResponsiveHeaderRenderer?.title?.runs?.[0]?.text) {
+        playlistTitle = node.musicResponsiveHeaderRenderer.title.runs[0].text;
       }
-    }
-  }
 
-  let continuationToken = parseRendererList(initialItems);
+      Object.values(node).forEach(walkYtMusic);
+    };
 
-  // Paginar automaticamente de 100 em 100 até carregar todas as músicas (330 / 900+)
-  let pagesFetched = 0;
-  while (continuationToken && tracks.length < 1500 && pagesFetched < 15) {
-    pagesFetched++;
-    try {
-      const contRes = await httpsRequestText('https://www.youtube.com/youtubei/v1/browse?prettyPrint=false', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Origin': 'https://www.youtube.com'
-        },
-        body: JSON.stringify({ context: ytContext, continuation: continuationToken })
-      });
-
-      if (contRes.status !== 200) break;
-      const contJson = JSON.parse(contRes.body);
-      const actions = contJson?.onResponseReceivedActions || [];
-      let nextItems = [];
-      for (const act of actions) {
-        const appended = act?.appendContinuationItemsAction?.continuationItems;
-        if (Array.isArray(appended)) {
-          nextItems = appended;
-          break;
-        }
-      }
-      continuationToken = parseRendererList(nextItems);
-    } catch (e) {
-      break;
-    }
+    walkYtMusic(json);
   }
 
   if (!tracks.length) {
-    throw new Error('A playlist do YouTube Music está privada ou vazia. Confirma se está como "Pública" ou "Não listada".');
+    throw new Error('A playlist do YouTube Music está privada ou bloqueada. Usa o link do Apple Music ou Spotify.');
   }
 
   return { sourceName: playlistTitle, tracks };
@@ -391,7 +357,7 @@ async function fetchFullSpotifyPlaylistViaApi(kind, id, addedBy) {
   return tracks.length > 0 ? { sourceName, tracks } : null;
 }
 
-// Extrator Apple Music (lê #serialized-server-data e pagina via amp-api)
+// Extrator Completo Apple Music (carrega as 332 / 900+ músicas + capas corrigidas)
 async function fetchFullAppleMusic(url, html, addedBy) {
   const titleMatch = html.match(/<title>(.*?)<\/title>/i);
   const pageTitle = titleMatch ? titleMatch[1].replace(/\s*-\s*Apple Music.*$/i, '').trim() : 'Apple Music';
@@ -405,7 +371,7 @@ async function fetchFullAppleMusic(url, html, addedBy) {
   const tracks = [];
   const seenKeys = new Set();
 
-  // 1. Extrair faixas iniciais diretamente do bloco JSON embutido na página da Apple
+  // 1. Ler as primeiras 300 faixas do bloco JSON embutido
   const serverDataMatch = html.match(/<script type="application\/json" id="serialized-server-data">([\s\S]*?)<\/script>/i);
   if (serverDataMatch) {
     try {
@@ -421,7 +387,7 @@ async function fetchFullAppleMusic(url, html, addedBy) {
           if (!seenKeys.has(key)) {
             seenKeys.add(key);
             const rawArt = node.artwork?.dictionary?.url || node.artwork?.url || '';
-            const cover = rawArt ? rawArt.replace('{w}', '300').replace('{h}', '300') : '';
+            const cover = formatAppleCoverUrl(rawArt);
             tracks.push({
               id: `trk-${Date.now()}-${tracks.length}-${crypto.randomBytes(2).toString('hex')}`,
               title: node.title,
@@ -439,7 +405,7 @@ async function fetchFullAppleMusic(url, html, addedBy) {
     } catch (e) {}
   }
 
-  // 2. Tentar obter páginas seguintes via amp-api
+  // 2. Paginar o restante (faixas 301 até 1500) usando platform=web na amp-api
   try {
     let jwtToken = null;
     const inlineJwt = html.match(/eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6[a-zA-Z0-9._-]+/);
@@ -447,7 +413,7 @@ async function fetchFullAppleMusic(url, html, addedBy) {
       jwtToken = inlineJwt[0];
     } else {
       const scriptMatches = [...html.matchAll(/src="(\/assets\/[^"]+\.js)"/gi)];
-      for (const sm of scriptMatches.slice(0, 6)) {
+      for (const sm of scriptMatches.slice(0, 8)) {
         const jsCode = await fetchHttpsText(`https://music.apple.com${sm[1]}`);
         const found = jsCode.match(/eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6[a-zA-Z0-9._-]+/);
         if (found) {
@@ -464,9 +430,13 @@ async function fetchFullAppleMusic(url, html, addedBy) {
         'Referer': 'https://music.apple.com/'
       };
 
-      let nextPath = `/v1/catalog/${storefront}/${kind}/${appleId}/tracks?l=pt-PT&limit=100&offset=${tracks.length}`;
+      let nextPath = `/v1/catalog/${storefront}/${kind}/${appleId}/tracks?platform=web&l=pt-PT&limit=100&offset=${tracks.length}`;
       while (nextPath && tracks.length < 1500) {
-        const apiRes = await httpsRequestText(`https://amp-api.music.apple.com${nextPath}`, { headers: ampHeaders });
+        const fullApiUrl = nextPath.startsWith('http')
+          ? nextPath
+          : `https://amp-api.music.apple.com${nextPath}${nextPath.includes('platform=web') ? '' : '&platform=web'}`;
+
+        const apiRes = await httpsRequestText(fullApiUrl, { headers: ampHeaders });
         if (apiRes.status !== 200) break;
 
         const json = JSON.parse(apiRes.body);
@@ -479,8 +449,7 @@ async function fetchFullAppleMusic(url, html, addedBy) {
           if (seenKeys.has(key)) continue;
           seenKeys.add(key);
 
-          const rawArt = attr.artwork?.url || '';
-          const cover = rawArt ? rawArt.replace('{w}', '300').replace('{h}', '300') : '';
+          const cover = formatAppleCoverUrl(attr.artwork?.url || '');
 
           tracks.push({
             id: `trk-${Date.now()}-${tracks.length}-${crypto.randomBytes(2).toString('hex')}`,
@@ -502,7 +471,7 @@ async function fetchFullAppleMusic(url, html, addedBy) {
     return { sourceName: pageTitle, tracks };
   }
 
-  throw new Error('Não foi possível ler as faixas desta playlist do Apple Music. Usa o link da tua playlist do YouTube Music.');
+  throw new Error('Não foi possível ler as faixas desta playlist do Apple Music.');
 }
 
 async function resolveYouTubeVideo(query) {
@@ -532,7 +501,7 @@ async function extractTracksFromUrl(rawUrl, addedBy) {
   let url = String(rawUrl || '').trim();
   if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
 
-  // 1. Playlists do YouTube e YouTube Music (ex: music.youtube.com/playlist?list=... ou youtube.com/playlist?list=...)
+  // 1. Playlists do YouTube e YouTube Music
   if (/(?:youtube\.com|youtu\.be)/i.test(url) && /[?&]list=([a-zA-Z0-9_-]+)/i.test(url)) {
     const listMatch = url.match(/[?&]list=([a-zA-Z0-9_-]+)/i);
     if (listMatch && listMatch[1]) {
@@ -624,7 +593,7 @@ async function extractTracksFromUrl(rawUrl, addedBy) {
   }
 
   if (/^https?:\/\//i.test(rawUrl.trim())) {
-    throw new Error('Link não suportado. Cola um link público de playlist do YouTube Music, YouTube, Spotify ou Apple Music.');
+    throw new Error('Link não suportado. Cola um link público de playlist do Apple Music, Spotify ou YouTube.');
   }
 
   // 5. Pesquisa direta por nome da música/artista
@@ -817,7 +786,9 @@ async function startTrackInMusicRoom(track) {
     const resolved = await resolveYouTubeVideo(`${track.artist} - ${track.title}`);
     if (resolved) {
       track.youtubeId = resolved.videoId;
-      if (!track.cover) track.cover = resolved.thumbnail;
+      if (!track.cover || track.cover.includes('{')) {
+        track.cover = resolved.thumbnail;
+      }
     }
   }
 
