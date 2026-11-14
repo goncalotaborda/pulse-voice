@@ -9,12 +9,12 @@ services:
       - "3050:3000"
     environment:
       - PORT=3000
-      - SERVER_PASSWORD=teste123
+      - SERVER_PASSWORD=COLOCA_UM_CODIGO_CONVITE_FORTE
       - DATA_DIR=/app/data
       - MUSIC_DIR=/app/music
       - LIVEKIT_API_KEY=concord_api_key
-      - LIVEKIT_API_SECRET=concord_secret_key_oracle_2026_x9k2m8
-      - LIVEKIT_URL=ws://100.123.196.21:7880
+      - LIVEKIT_API_SECRET=ESCOLHE_UMA_CHAVE_FORTE_AQUI
+      - LIVEKIT_URL=wss://concord-studio.duckdns.org
     volumes:
       - pulse_data:/app/data
       - /home/ubuntu/concord-music:/app/music:ro
