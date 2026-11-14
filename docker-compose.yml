@@ -11,11 +11,13 @@ services:
       - PORT=3000
       - SERVER_PASSWORD=teste123
       - DATA_DIR=/app/data
+      - MUSIC_DIR=/app/music
       - LIVEKIT_API_KEY=concord_api_key
       - LIVEKIT_API_SECRET=concord_secret_key_oracle_2026_x9k2m8
       - LIVEKIT_URL=ws://100.123.196.21:7880
     volumes:
       - pulse_data:/app/data
+      - /home/ubuntu/concord-music:/app/music:ro
 
   livekit:
     image: livekit/livekit-server:latest

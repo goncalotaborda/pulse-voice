@@ -778,6 +778,124 @@ app.post('/livekit-token', async (req, res) => {
   if (!CHANNELS.some(c => c.id === channelId)) {
     return res.status(400).json({ ok: false, error: 'Canal inválido.' });
   }
+  // ============================================================================
+// BIBLIOTECA DE MÚSICA PRIVADA NA VPS (/app/music)
+// ============================================================================
+const MUSIC_DIR = process.env.MUSIC_DIR || '/app/music';
+
+function scanVpsMusicLibrary() {
+  try {
+    if (!fs.existsSync(MUSIC_DIR)) return [];
+    const files = fs.readdirSync(MUSIC_DIR)
+      .filter(f => /\.(mp3|m4a|wav|ogg|flac)$/i.test(f))
+      .sort((a, b) => a.localeCompare(b, 'pt'));
+
+    return files.map((filename) => {
+      const baseName = filename.replace(/\.[^/.]+$/, '');
+      const parts = baseName.split(' - ');
+      const artist = parts.length > 1 ? parts[0].trim() : 'Biblioteca VPS';
+      const title = parts.length > 1 ? parts.slice(1).join(' - ').trim() : baseName.trim();
+      return {
+        id: Buffer.from(filename).toString('base64url'),
+        filename,
+        title,
+        artist,
+        platform: 'VPS Oracle'
+      };
+    });
+  } catch (err) {
+    return [];
+  }
+}
+
+const vpsMusicRoomState = {
+  playlistTitle: 'Biblioteca Privada VPS',
+  queue: [],
+  currentTrack: null,
+  isPlaying: false,
+  shuffle: false,
+  currentTime: 0,
+  updatedAt: Date.now()
+};
+
+function getComputedMusicState() {
+  let elapsed = vpsMusicRoomState.currentTime || 0;
+  if (vpsMusicRoomState.isPlaying && vpsMusicRoomState.currentTrack) {
+    elapsed += (Date.now() - vpsMusicRoomState.updatedAt) / 1000;
+  }
+  return {
+    playlistTitle: vpsMusicRoomState.playlistTitle,
+    queue: vpsMusicRoomState.queue,
+    currentTrack: vpsMusicRoomState.currentTrack,
+    isPlaying: vpsMusicRoomState.isPlaying,
+    shuffle: vpsMusicRoomState.shuffle,
+    currentTime: Math.max(0, elapsed)
+  };
+}
+
+app.get('/vps-music/list', (req, res) => {
+  const username = decodeURIComponent(req.headers['x-username'] || '');
+  const password = decodeURIComponent(req.headers['x-password'] || '');
+  if (!verifyUserCredentials(username, password)) {
+    return res.status(401).json({ ok: false, error: 'Não autorizado.' });
+  }
+  const tracks = scanVpsMusicLibrary();
+  vpsMusicRoomState.queue = tracks;
+  if (!vpsMusicRoomState.currentTrack && tracks.length > 0) {
+    vpsMusicRoomState.currentTrack = tracks[0];
+  }
+  res.json({ ok: true, tracks, state: getComputedMusicState() });
+});
+
+app.get('/vps-music/stream/:filename', (req, res) => {
+  const username = req.query.u || '';
+  const password = req.query.p || '';
+  if (!verifyUserCredentials(username, password)) {
+    return res.status(401).send('Não autorizado');
+  }
+
+  const safeName = path.basename(req.params.filename || '');
+  const filePath = path.join(MUSIC_DIR, safeName);
+  if (!fs.existsSync(filePath)) {
+    return res.status(404).send('Ficheiro não encontrado');
+  }
+
+  const stat = fs.statSync(filePath);
+  const fileSize = stat.size;
+  const ext = path.extname(safeName).toLowerCase();
+  const mimeMap = {
+    '.mp3': 'audio/mpeg',
+    '.m4a': 'audio/mp4',
+    '.wav': 'audio/wav',
+    '.ogg': 'audio/ogg',
+    '.flac': 'audio/flac'
+  };
+  const contentType = mimeMap[ext] || 'audio/mpeg';
+  const range = req.headers.range;
+
+  if (range) {
+    const parts = range.replace(/bytes=/, '').split('-');
+    const start = parseInt(parts[0], 10);
+    const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
+    const chunkSize = (end - start) + 1;
+    const fileStream = fs.createReadStream(filePath, { start, end });
+
+    res.writeHead(206, {
+      'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+      'Accept-Ranges': 'bytes',
+      'Content-Length': chunkSize,
+      'Content-Type': contentType
+    });
+    fileStream.pipe(res);
+  } else {
+    res.writeHead(200, {
+      'Content-Length': fileSize,
+      'Content-Type': contentType,
+      'Accept-Ranges': 'bytes'
+    });
+    fs.createReadStream(filePath).pipe(res);
+  }
+});
 
   try {
     const at = new AccessToken(LIVEKIT_API_KEY, LIVEKIT_API_SECRET, {
@@ -1052,94 +1170,64 @@ io.on('connection', (socket) => {
     });
   });
 
-  socket.on('music-action', async (payload, cb) => {
-    const user = activeSessions.get(socket.id);
-    if (!user || user.channelId !== 'music') return cb?.({ ok: false });
-
-    try {
-      if (payload.action === 'load-url') {
-        const extracted = await extractTracksFromUrl(payload.url, user.name);
-        if (!extracted.tracks.length) {
-          return cb?.({ ok: false, error: 'Nenhuma faixa encontrada neste link.' });
-        }
-
-        if (payload.playNow) {
-          musicRoomState.playlistTitle = extracted.sourceName;
-          musicRoomState.queue = [...extracted.tracks];
-          const firstIdx = musicRoomState.shuffle
-            ? Math.floor(Math.random() * musicRoomState.queue.length)
-            : 0;
-          const firstTrack = musicRoomState.queue[firstIdx];
-          await startTrackInMusicRoom(firstTrack);
-        } else {
-          if (!musicRoomState.playlistTitle) {
-            musicRoomState.playlistTitle = extracted.sourceName;
-          }
-          musicRoomState.queue.push(...extracted.tracks);
-          if (!musicRoomState.currentTrack) {
-            await startTrackInMusicRoom(musicRoomState.queue[0]);
-          } else {
-            io.to('music').emit('music-state-update', musicRoomState);
-          }
-        }
-        return cb?.({ ok: true });
-      }
-
-      if (payload.action === 'play-track') {
-        const target = musicRoomState.queue.find(t => t.id === payload.id);
-        if (target) {
-          await startTrackInMusicRoom(target);
-        }
-        return cb?.({ ok: true });
-      }
-
-      if (payload.action === 'toggle-play') {
-        if (musicRoomState.currentTrack) {
-          musicRoomState.isPlaying = !musicRoomState.isPlaying;
-          io.to('music').emit('music-state-update', musicRoomState);
-        }
-        return cb?.({ ok: true });
-      }
-
-      if (payload.action === 'toggle-shuffle') {
-        musicRoomState.shuffle = !musicRoomState.shuffle;
-        io.to('music').emit('music-state-update', musicRoomState);
-        return cb?.({ ok: true });
-      }
-
-      if (payload.action === 'next') {
-        if (musicRoomState.queue.length > 0) {
-          const curIdx = musicRoomState.currentTrack
-            ? musicRoomState.queue.findIndex(t => t.id === musicRoomState.currentTrack.id)
-            : -1;
-
-          let nextIdx = 0;
-          if (musicRoomState.shuffle && musicRoomState.queue.length > 1) {
-            do {
-              nextIdx = Math.floor(Math.random() * musicRoomState.queue.length);
-            } while (nextIdx === curIdx);
-          } else {
-            nextIdx = (curIdx + 1) % musicRoomState.queue.length;
-          }
-
-          await startTrackInMusicRoom(musicRoomState.queue[nextIdx]);
-        }
-        return cb?.({ ok: true });
-      }
-
-      if (payload.action === 'queue-remove') {
-        const wasCurrent = musicRoomState.currentTrack?.id === payload.id;
-        musicRoomState.queue = musicRoomState.queue.filter(t => t.id !== payload.id);
-        if (wasCurrent) {
-          await startTrackInMusicRoom(musicRoomState.queue[0] || null);
-        } else {
-          io.to('music').emit('music-state-update', musicRoomState);
-        }
-        return cb?.({ ok: true });
-      }
-    } catch (err) {
-      return cb?.({ ok: false, error: err.message || 'Erro ao carregar playlist.' });
+socket.on('music-action', (payload = {}, ack) => {
+    if (!vpsMusicRoomState.queue.length) {
+      vpsMusicRoomState.queue = scanVpsMusicLibrary();
     }
+    const queue = vpsMusicRoomState.queue;
+    const { action } = payload;
+
+    if (action === 'sync-request') {
+      if (typeof ack === 'function') ack({ ok: true, state: getComputedMusicState() });
+      return;
+    }
+
+    if (action === 'refresh-library') {
+      vpsMusicRoomState.queue = scanVpsMusicLibrary();
+      io.to('music').emit('music-state-update', getComputedMusicState());
+      if (typeof ack === 'function') ack({ ok: true });
+      return;
+    }
+
+    if (action === 'play-track') {
+      const found = queue.find(t => t.id === payload.id);
+      if (found) {
+        vpsMusicRoomState.currentTrack = found;
+        vpsMusicRoomState.isPlaying = true;
+        vpsMusicRoomState.currentTime = 0;
+        vpsMusicRoomState.updatedAt = Date.now();
+      }
+    } else if (action === 'toggle-play') {
+      if (!vpsMusicRoomState.currentTrack && queue.length) {
+        vpsMusicRoomState.currentTrack = queue[0];
+      }
+      const computed = getComputedMusicState();
+      vpsMusicRoomState.currentTime = computed.currentTime;
+      vpsMusicRoomState.isPlaying = !vpsMusicRoomState.isPlaying;
+      vpsMusicRoomState.updatedAt = Date.now();
+    } else if (action === 'toggle-shuffle') {
+      vpsMusicRoomState.shuffle = !vpsMusicRoomState.shuffle;
+    } else if (action === 'seek') {
+      vpsMusicRoomState.currentTime = Math.max(0, Number(payload.time || 0));
+      vpsMusicRoomState.updatedAt = Date.now();
+    } else if (action === 'next') {
+      if (queue.length > 0) {
+        if (vpsMusicRoomState.shuffle && queue.length > 1) {
+          const candidates = queue.filter(t => t.id !== vpsMusicRoomState.currentTrack?.id);
+          vpsMusicRoomState.currentTrack = candidates[Math.floor(Math.random() * candidates.length)];
+        } else {
+          const idx = queue.findIndex(t => t.id === vpsMusicRoomState.currentTrack?.id);
+          const nextIdx = (idx + 1) % queue.length;
+          vpsMusicRoomState.currentTrack = queue[nextIdx];
+        }
+        vpsMusicRoomState.isPlaying = true;
+        vpsMusicRoomState.currentTime = 0;
+        vpsMusicRoomState.updatedAt = Date.now();
+      }
+    }
+
+    io.to('music').emit('music-state-update', getComputedMusicState());
+    if (typeof ack === 'function') ack({ ok: true });
   });
 
   socket.on('webrtc-signal', ({ to, data }) => {
