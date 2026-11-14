@@ -9,11 +9,11 @@ services:
       - "3050:3000"
     environment:
       - PORT=3000
-      - SERVER_PASSWORD=COLOCA_UM_CODIGO_CONVITE_FORTE
+      - SERVER_PASSWORD=teste123
       - DATA_DIR=/app/data
       - MUSIC_DIR=/app/music
       - LIVEKIT_API_KEY=concord_api_key
-      - LIVEKIT_API_SECRET=ESCOLHE_UMA_CHAVE_FORTE_AQUI
+      - LIVEKIT_API_SECRET=concord_lk_9f8a2c7e4b1d6053a8e9f2c14d7b3a60
       - LIVEKIT_URL=wss://concord-studio.duckdns.org
     volumes:
       - pulse_data:/app/data
