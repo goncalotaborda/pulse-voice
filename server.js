@@ -304,13 +304,11 @@ function scanVpsMusicLibrary() {
       };
     };
 
-    // Ficheiros soltos na raiz (caso existam)
     entries
       .filter((f) => f.isFile() && /\.(mp3|m4a|wav|ogg|flac)$/i.test(f.name))
       .sort((a, b) => a.name.localeCompare(b.name, 'pt'))
       .forEach((f) => tracks.push(parseAudioFile(f.name, '')));
 
-    // Ficheiros organizados por subpastas de playlist
     folderNames.forEach((folder) => {
       const folderPath = path.join(MUSIC_DIR, folder);
       const subFiles = fs.readdirSync(folderPath)
@@ -470,7 +468,7 @@ app.get('/vps-music/stream', (req, res) => {
 });
 
 // ============================================================================
-// SOCKET.IO: SALAS DE VOZ, PRESENÇA, CHAT E MÚSICA SINCRONIZADA
+// SOCKET.IO: SALAS DE VOZ, PRESENÇA, PERFIS, CHAT E MÚSICA SINCRONIZADA
 // ============================================================================
 const CHANNELS = [
   { id: 'lobby', name: 'Global', icon: 'globe' },
@@ -491,6 +489,8 @@ function buildDirectoryState() {
       name: sess.name,
       color: sess.color,
       avatar: sess.avatar,
+      banner: sess.banner || null,
+      bio: sess.bio || '',
       muted: sess.muted,
       deafened: sess.deafened,
       sharing: sess.sharing,
@@ -511,7 +511,9 @@ function buildDirectoryState() {
       offline.push({
         name: u.username,
         color: u.color || '#52525b',
-        avatar: u.avatar || null
+        avatar: u.avatar || null,
+        banner: u.banner || null,
+        bio: u.bio || ''
       });
     }
   });
@@ -528,9 +530,10 @@ function broadcastDirectory() {
 }
 
 io.on('connection', (socket) => {
-  socket.on('authenticate', ({ mode, username, password, serverCode, color, avatar }, ack) => {
+  socket.on('authenticate', ({ mode, username, password, serverCode, color, avatar, banner, bio }, ack) => {
     const cleanName = String(username || '').trim().slice(0, 22);
     const key = cleanName.toLowerCase();
+    const cleanBio = typeof bio === 'string' ? bio.slice(0, 120) : '';
 
     if (!cleanName || !password) {
       return ack?.({ ok: false, error: 'Preenche o nome de utilizador e a palavra-passe.' });
@@ -548,6 +551,8 @@ io.on('connection', (socket) => {
         passwordHash: hashPassword(password),
         color: color || '#6366f1',
         avatar: avatar || null,
+        banner: banner || null,
+        bio: cleanBio,
         createdAt: Date.now()
       };
       saveJson(USERS_FILE, usersDb);
@@ -559,18 +564,35 @@ io.on('connection', (socket) => {
       if (existingUser.passwordHash !== hashPassword(password)) {
         return ack?.({ ok: false, error: 'Palavra-passe incorreta.' });
       }
-      if (avatar) {
+
+      let dbChanged = false;
+      if (avatar && existingUser.avatar !== avatar) {
         existingUser.avatar = avatar;
-        saveJson(USERS_FILE, usersDb);
+        dbChanged = true;
       }
+      if (banner && existingUser.banner !== banner) {
+        existingUser.banner = banner;
+        dbChanged = true;
+      }
+      if (typeof bio === 'string' && existingUser.bio !== cleanBio) {
+        existingUser.bio = cleanBio;
+        dbChanged = true;
+      }
+      if (color && existingUser.color !== color) {
+        existingUser.color = color;
+        dbChanged = true;
+      }
+      if (dbChanged) saveJson(USERS_FILE, usersDb);
     }
 
     const account = usersDb[key];
     activeSessions.set(socket.id, {
       id: socket.id,
       name: account.username,
-      color: account.color || color || '#6366f1',
+      color: color || account.color || '#6366f1',
       avatar: avatar || account.avatar || null,
+      banner: banner || account.banner || null,
+      bio: typeof bio === 'string' ? cleanBio : (account.bio || ''),
       channelId: null,
       muted: false,
       deafened: false,
@@ -583,7 +605,13 @@ io.on('connection', (socket) => {
     ack?.({
       ok: true,
       id: socket.id,
-      user: { username: account.username, avatar: account.avatar, color: account.color },
+      user: {
+        username: account.username,
+        avatar: account.avatar,
+        color: account.color,
+        banner: account.banner || null,
+        bio: account.bio || ''
+      },
       state: buildDirectoryState(),
       history: chatHistory,
       soundboard: soundboardList
@@ -613,7 +641,9 @@ io.on('connection', (socket) => {
     });
 
     if (channelId === 'music' && !vpsMusicRoomState.queue.length) {
-      vpsMusicRoomState.queue = scanVpsMusicLibrary();
+      const scanned = scanVpsMusicLibrary();
+      vpsMusicRoomState.playlists = scanned.playlists;
+      vpsMusicRoomState.queue = scanned.tracks;
       if (!vpsMusicRoomState.currentTrack && vpsMusicRoomState.queue.length) {
         vpsMusicRoomState.currentTrack = vpsMusicRoomState.queue[0];
       }
@@ -645,14 +675,29 @@ io.on('connection', (socket) => {
   socket.on('update-media-state', (patch = {}) => {
     const sess = activeSessions.get(socket.id);
     if (!sess) return;
+    if (typeof patch.bio === 'string') patch.bio = patch.bio.slice(0, 120);
     Object.assign(sess, patch);
 
-    if (patch.avatar) {
-      const key = sess.name.toLowerCase();
-      if (usersDb[key]) {
+    const key = sess.name.toLowerCase();
+    if (usersDb[key]) {
+      let dbChanged = false;
+      if (patch.avatar !== undefined) {
         usersDb[key].avatar = patch.avatar;
-        saveJson(USERS_FILE, usersDb);
+        dbChanged = true;
       }
+      if (patch.banner !== undefined) {
+        usersDb[key].banner = patch.banner;
+        dbChanged = true;
+      }
+      if (patch.bio !== undefined) {
+        usersDb[key].bio = patch.bio;
+        dbChanged = true;
+      }
+      if (patch.color !== undefined) {
+        usersDb[key].color = patch.color;
+        dbChanged = true;
+      }
+      if (dbChanged) saveJson(USERS_FILE, usersDb);
     }
 
     if (sess.channelId) {
@@ -687,7 +732,7 @@ io.on('connection', (socket) => {
     });
   });
 
-socket.on('music-action', (payload = {}, ack) => {
+  socket.on('music-action', (payload = {}, ack) => {
     if (!vpsMusicRoomState.queue.length) {
       const scanned = scanVpsMusicLibrary();
       vpsMusicRoomState.playlists = scanned.playlists;
