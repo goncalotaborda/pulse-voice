@@ -833,6 +833,36 @@ io.on('connection', (socket) => {
     io.emit('chat-message', msg);
   });
 
+  socket.on('edit-chat-message', ({ id, text }) => {
+    const sess = activeSessions.get(socket.id);
+    if (!sess) return;
+    const cleanText = String(text || '').trim().slice(0, 2000);
+    if (!id || !cleanText) return;
+
+    const msg = chatHistory.find(m => m.id === id);
+    if (!msg) return;
+    if (msg.senderName.toLowerCase() !== sess.name.toLowerCase()) return;
+
+    msg.text = cleanText;
+    msg.edited = true;
+    saveJson(CHAT_FILE, chatHistory);
+    io.emit('chat-message-updated', { id: msg.id, text: msg.text, edited: true });
+  });
+
+  socket.on('delete-chat-message', ({ id }) => {
+    const sess = activeSessions.get(socket.id);
+    if (!sess || !id) return;
+
+    const idx = chatHistory.findIndex(m => m.id === id);
+    if (idx === -1) return;
+    const msg = chatHistory[idx];
+    if (msg.senderName.toLowerCase() !== sess.name.toLowerCase()) return;
+
+    chatHistory.splice(idx, 1);
+    saveJson(CHAT_FILE, chatHistory);
+    io.emit('chat-message-deleted', { id });
+  });
+  
   socket.on('ping-check', (cb) => {
     if (typeof cb === 'function') cb();
   });
