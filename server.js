@@ -809,7 +809,7 @@ io.on('connection', (socket) => {
     if (typeof ack === 'function') ack({ ok: true });
   });
 
-  socket.on('chat-message', ({ text, image }) => {
+socket.on('chat-message', ({ text, image, replyTo }) => {
     const sess = activeSessions.get(socket.id);
     if (!sess) return;
     const cleanText = String(text || '').trim().slice(0, 2000);
@@ -817,6 +817,14 @@ io.on('connection', (socket) => {
 
     const now = new Date();
     const timestamp = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+    const safeReply = (replyTo && replyTo.id && replyTo.senderName)
+      ? {
+          id: String(replyTo.id),
+          senderName: String(replyTo.senderName).slice(0, 30),
+          text: String(replyTo.text || (replyTo.hasImage ? '🖼️ Imagem / GIF' : '📦 Ficheiro')).slice(0, 120)
+        }
+      : null;
+
     const msg = {
       id: crypto.randomUUID(),
       senderName: sess.name,
@@ -824,6 +832,8 @@ io.on('connection', (socket) => {
       senderAvatar: sess.avatar || null,
       text: cleanText,
       image: image || null,
+      replyTo: safeReply,
+      reactions: {},
       timestamp
     };
 
@@ -831,6 +841,31 @@ io.on('connection', (socket) => {
     if (chatHistory.length > 150) chatHistory = chatHistory.slice(-150);
     saveJson(CHAT_FILE, chatHistory);
     io.emit('chat-message', msg);
+  });
+
+  socket.on('toggle-chat-reaction', ({ messageId, emoji }) => {
+    const sess = activeSessions.get(socket.id);
+    if (!sess || !messageId || !emoji) return;
+    const cleanEmoji = String(emoji).trim().slice(0, 8);
+    const msg = chatHistory.find(m => m.id === messageId);
+    if (!msg) return;
+
+    if (!msg.reactions) msg.reactions = {};
+    if (!Array.isArray(msg.reactions[cleanEmoji])) msg.reactions[cleanEmoji] = [];
+
+    const existingIdx = msg.reactions[cleanEmoji].findIndex(
+      n => n.toLowerCase() === sess.name.toLowerCase()
+    );
+
+    if (existingIdx >= 0) {
+      msg.reactions[cleanEmoji].splice(existingIdx, 1);
+      if (msg.reactions[cleanEmoji].length === 0) delete msg.reactions[cleanEmoji];
+    } else {
+      msg.reactions[cleanEmoji].push(sess.name);
+    }
+
+    saveJson(CHAT_FILE, chatHistory);
+    io.emit('chat-reaction-updated', { messageId: msg.id, reactions: msg.reactions });
   });
 
   socket.on('edit-chat-message', ({ id, text }) => {
